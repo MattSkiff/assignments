@@ -1,0 +1,484 @@
+---
+title: 'Assignment 1 STAT326: Computational Bayesian Statistics'
+author: "Matthew Skiffington"
+date: "August 14, 2018"
+output:
+  html_document:
+    df_print: paged
+  latex_engine: xelatex
+  pdf_document: null
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = T)
+knitr::opts_chunk$set(comment = NA)
+knitr::opts_chunk$set(fig.height = 4)
+knitr::opts_chunk$set(warning = F)
+library(ggplot2)
+options(digits = 3)
+set.seed(12345)
+options(warn=-1)
+```
+
+Preface: in this assignment I have used sections from Computation Bayesian Statistics (W. Bolstad, 2010), Introduction to Bayesian Statistics (W. Bolstad, 2017) the STAT326 course notes (C. Joshi, 2018) and online supplmentary material (directly referenced in the text) to help my understanding and to help synthesise answers. 
+
+All  code used to produce these answers and used to create this document is available on request. A seperate copy of this document with code folding is available on my Rpubs account: [rpubs.com/matt_skiff][rpubs.com/matt_skiff] 
+
+# Q1
+
+**Clearly explain the difference between the likelihood function and the joint probability function. Illustrate using an example.**
+
+They are the same function with two very different interpretations. This leads to different methods of calculation and different techniques (bayesian vs. frequentist). Both functions can be expressed as;
+
+$$f(y|{\theta}) = \prod_{i=1}^{n} f(yi|{\theta})$$
+
+If we consider this as a *joint probability function*, we consider Y as random or unknown and the result of the function is a joint probability (where we know ${\theta}$ as we calculate it directly from the probability distribution. However, if we consider this as a *likelihood function*, we consider ${\theta}$ as fixed and unknown, we observe Y, and we use the likelihood to indirectly estimate plausible estimates of ${\theta}$  (hence the murkyness around confidence interval interpretation).
+
+The *likelihood function* calculates the likelihood over a given domain. This is calculated for parameters of a model, given observed data. For example, a likelihood function could be created for the mean of a data set. These are values that have a subtle difference to probability in that they (in bayesian statistics) describe plausibility of a parameter, not the probability of a parameter. Intervals of the likelihood distribtiion do not directly correspond to probabiltity values. As such, the distribution will not integrate to 1 (as sum of probability density for a true probability distribution should equal 1).
+
+*Joint probability* is the probability that events A and B occur simulataneously (Bolstad,2017). The joint probability function takes the input of two continuous variables and calculates the probability density that is shared between them. In the context of bayesian statistics, this would be both the probability values observed from the prior and the data. The joint probability function will integrate to one, as it is a proper probability distribution.
+
+> Some supplementary information helping my interpretation was found at the wikipedia page: en.wikipedia.org/wiki/Likelihood_function
+
+We can illustrate this concept using the example of flipping coins. We observe a certain number of heads given a certain fixed number of trials (coin flips). This results in a set of Bernoulli distributions. This data generating model is a binomial distribution. The joint probability we would calculate comes to a specific probability value (using the binomial equation), because we  know (for example) n = 30 and we *assume* we know the parameter value of p = 0.5, i.e. we make the assumption the coin is unbiased. If we use the binomial equation to calculate the probability value, it gives us a joint probability as it reflects the joint probability of such a combination of results occuring between the bernoulli distributions (of $X_1 = X_i\ , ...,\ X_{30} = X_{i}\ for\ i = 1\  to\ 30$) i.e. 30 random variables. Because we have a fixed number of these random variables and they are independant of one another, we can use the binomial distribution to directly calculate the probability. We find this is a result if we consider the binomial equation in this scenario as a joint probability function.
+
+However, of course, we do not know this for most real life situations, resulting a calculation that is unable to be completed, unless we use a prior. This is the case where ${\theta}$ is unknown. In this instance, we find;
+
+$$Joint Likelihood = {30\choose 13}p^{13}(1 - p)^{17}$$
+In the case where we have 13 heads ($i = 13$). We find this is the result if we consider the the binomial equation used as a likelihood function, because we do not know p (after all, we wish to know whether this coin is biased). We could plot a distribution of results with p on the x axis and y as the result of the above equation. This would give us the likelihood distribution. This is a very useful result, as we can now attempt to normalise this likelihood using a scaling factor into a proper probability distribution from which we can perform bayesian inference. Or, in the context of frequentist regression, we can perform MLE. 
+
+# Q2 
+
+## (a)  
+
+**Explain the basic idea behind the maximum likelihood estimation and how it is obtained.**
+
+Continuing from the previous answer, we have a likelihood function. We can plot this to see it's distribution of values about possible values of the parameter. As the name implies, using MLE, we find the maximum value of the likelihood. This is given various values of the parameter (i.e. we are considering the parameter fixed and unknown). This maximum value of the likelihood represents the most plausible value of the parameter we have, so we use this as our estimate. 
+
+Continuing from the above example the MLE will of the probability parameter will be; $\hat{p} = \frac{\sigma}{n}$. This is because this is value of p we find that maximises the likelihood, in this case using the binomial equation for the joint likelihood. Of course, we are unlikely to provide a point estimate alone and under frequentist methods will probably create a confidence interval. It would useful to be able to incorporate our prior knowledge (that the coin is almost certainly unbiased) into this estimate. However, if we use a flat prior, then the bayesian estimate will be equivalent to the frequentist MLE estimate.
+
+More generally, the MLE estimate is found by differentiating the likelihood function such that we find the value of the parameter for where the derivative is equal to zero (this will usually be the point where the likelihood is maximised, ignoring complexities involved in local maxima). We must also find that when taking the second derivative of the likelihood function we find a result greater than zero. This ensures we avoid points of inflection and minima. 
+
+We use the log-likelihood function and partially differentiate this to produce a vector of predictor estimates (see STATS580 reference). This is referenced as the analytical solution in the course notes.
+
+## (b)  
+
+**Find the maximum likelihood estimator (MLE) of** $\theta$ **when:**
+
+$$f(y1, y2, ..., y_n |\,{\theta})\,{\propto}\,exp[\frac{-1}8 \sum_{i=1}^{n}  (y_i - \theta)^{2}]$$
+We start by taking the log of this function;
+
+$$l(\theta) = log {L}(\theta) = log(f(y1, y2, ..., y_n |\,{\theta})\,{\propto}\,exp[\frac{-1}8 \sum_{i=1}^{n}  (yi - \theta){^2}])$$
+
+We then take the partial derivatives (meaning we only differentiate with respect to $\theta$) of this function and solve for zero;
+
+$$\frac{\partial \,l(\theta)}{\partial \,\theta} = 0$$
+Because the likelihood is proportional to the function given, we will consider only that function for now. If we take the log of the likelihood function, this removes the exponent
+
+$$log(\exp[\frac{-1}8 \sum_{i=1}^{n}  (yi - \theta){^2}]) = \frac{-1}8 \sum_{i=1}^{n}  (yi - \theta){^2}$$
+
+We then need to take the partial derivative of this function, with respect to theta. We can get rid of the fractional term as it does not involve theta. We wish to partially differentiate this so that it is equal to zero. When we differentiate this term, the the exponent comes out as a constant in front of the summation term. We can then ignore this as it is applied to both $y_i$ and $\theta$;
+
+$$\sum_{i=1}^{n}  (yi - \theta){^2} = 0$$
+
+When partially differentiated;
+
+$$\sum_{i=1}^{n}y_i \, - \, \sum_{i=1}^{n}\theta = 0$$
+We can then replace the summation term for $\theta$ with $n$ - as $\theta$ is constant while $y_i$ varies;
+
+$$\sum_{i=1}^{n}y_i \, = \, n\theta$$
+Rearranging this equation, we find a highly convential estimator;
+
+$$\theta = \frac{\sum_{i=1}^{n}y_i}{n} $$
+
+Therefore the MLE estimator is;
+
+$$\hat{\theta} = \bar{x} $$
+\pagebreak
+
+
+# Q3 
+
+**Explain the basic idea behind the Bayesian approach to parameter estimation. In particular, explain what is the prior distribution and how it is chosen. Also explain what is the posterior distribution and how it is obtained.**
+
+Bayesian parameter estimation can be summed up as "posterior is proportional to prior times likelihood" which is essentially a rephrasing of Bayes formula for conditional probablility;
+
+$$P(\theta|X) = \frac{P(X|\theta)P(\theta)}{P(X)} \, ; \,  \propto P(X|\theta)P(\theta)$$
+This formula specifically applies to the case of discrete probability distributions, but can be generalised to continuous probability distributions. The idea behind this is instead of using the MLE as a point estimate for the paramter (be it a coefficient, the mean, standard deviation etc). From the posterior we can directly calculate statistics. For example, we may take the mode (highest point), the mean (point which divides the distribution into areas of 0.5) or the median (the "balancing" point of the distribution).
+
+Critically, this involves selection of a prior. This prior summarises your previous knowledge about what the parameter values are likely to be. For example, if we applied a Bayesian approach to our coin estimation, we would logically select a prior that is distributed about a central point 0.5. As we collected data and updated our prior we might find that this results in a posterior progressively closer to what we would expect (where $u$ = 0.5). Or perhaps we would find that the coin is indeed likely to be unbiased as our information from our data would supplant the information from our prior as we update the posterior. 
+
+The posterior represents a true probability distribution from which we can calculate statistics. It integrates to one. It is created from the likelihood, which we create from the data and the prior, which is either the previous posterior or which we purposefully select before we observe the data. To get the posterior to integrate to one, it is neccesary to multiply it by a scaling factor. 
+
+However, you would only find the posterior is obtainable using this simple method in the rare instance where we can use conjugate priors. Conjugate priors are able to mix with (have the same form as) our likelihood function, in the *exceptionally* rare instance the likelihood takes a specific probability distribution that is able to be conjugated. In the abscence of a conjugate prior, the posterior must be obtained using either numerical or computational methods. However, numerical methods can be challenging and are only really possible for low-dimensional data.
+
+# Q4 
+
+**Show (prove) that, if the prior distribution is chosen to be a continuous uniform distribution, then the exact posterior distribution is simply the normalised version of the likelihood function. Note that in this case the posterior mode will be the same as the MLE!**
+
+
+A flat uniform prior is commonly known as a "non-informative prior". We can use an interval of the uniform distribution between 0 and 1. As the name implies, the density of the uniform prior takes equal values from 0 to 1. We have our formula for the posterior distribution;
+
+$$P(\theta|X) = \frac{P(X|\theta)P(\theta)}{P(X)} $$
+In this case $P(\theta)$ will have an equal values across every possible value of $X$. Hence it is a constant and will scale $P(X|\theta)$ by $P(\theta)$ evenly. Therefore, after we normalise our posterior by scaling by $A$, the normalising constant, the posterior ($P(\theta|X)$) will be equal to $P(X|\theta)$ - the shape of the posterior has not changed due to $P(\theta)$. This result generalises to more complex examples. 
+
+\pagebreak
+
+# Q5 
+
+**Suppose the exact posterior distribution is Beta(1.5, 2.5). Then illustrate how the posterior mean, median and the 95% credible interval can be estimated by drawing a large number of samples (Monte Carlo method) from the posterior distribution. Do this 3 times - using samples of sizes 100, 1000 and 10000 respectively. For each sample,**
+
+## (a)
+
+**Plot the histogram of your sample on top of the plot of the true posterior distribution:**
+
+The true posterior is defined as a beta distribution with parameters a = 1.5 and b = 2.5. This was randomly sampled from using rbeta(). Comparative beta curves were overlaid by directly generating 1000 values from the beta distribution at equally spaced quantiles, using dbeta(). The samples were then plotted as histograms (with data automatically grouped into 30 bins), with the curves overlaid (and scaled to the histogram size, as dbeta() returns small density values and ggplot2 dissuades dual y-axis graphs) for comparison.
+
+```{r question 5,echo = F,fig.height = 4}
+p=seq(0,1,by = 0.001)
+
+### different priors
+a = 1.5; b = 2.5
+pr1=dbeta(p,a,b)  #flat prior
+
+sample_hundred <- as.data.frame(rbeta(100,1.5,2.5))
+sample_thousand <- as.data.frame(rbeta(1000,1.5,2.5))
+sample_10k <- as.data.frame(rbeta(10000,1.5,2.5))
+
+actual_beta_hundred <- as.data.frame(cbind(p,as.vector(dbeta(p,1.5,2.5)*3.5)))
+actual_beta_thousand <- as.data.frame(cbind(p,as.vector(dbeta(p,1.5,2.5)*35)))
+actual_beta_10k <- as.data.frame(cbind(p,as.vector(dbeta(p,1.5,2.5)*350)))
+
+colnames(actual_beta_hundred) <- c("x","beta")
+colnames(actual_beta_thousand) <- c("x","beta")
+colnames(actual_beta_10k) <- c("x","beta")
+
+colnames(sample_hundred) <- c("x")
+colnames(sample_thousand) <- c("x")
+colnames(sample_10k) <- c("x")
+
+ggplot(data = sample_hundred) + geom_histogram(mapping = aes(x = x),bins = 30) + theme_light() + ylab("Count")  + geom_line(data = actual_beta_hundred, mapping = aes(x = x, y = beta),colour = "red",size = 1) + labs(caption = "beta curve overlaid / scaled to fit histogram scale (x3.5)",title = "Histogram of Beta Sampling with Beta Curve Overlay",subtitle = "n = 100")
+
+ggplot(data = sample_thousand) + geom_histogram(mapping = aes(x = x),bins = 30) + theme_light() + ylab("Count")  + geom_line(data = actual_beta_thousand, mapping = aes(x = x, y = beta),colour = "red",size = 1) + labs(caption = "beta curve overlaid / scaled to fit histogram scale (x35)",title = "Histogram of Beta Sampling with Beta Curve Overlay",subtitle = "n = 1000")
+
+ggplot(data = sample_10k) + geom_histogram(mapping = aes(x = x),bins = 30) + theme_light() + ylab("Count")  + geom_line(data = actual_beta_10k, mapping = aes(x = x, y = beta),colour = "red",size = 1) + labs(caption = "beta curve overlaid / scaled to fit histogram scale (x350)",title = "Histogram of Beta Sampling with Beta Curve Overlay",subtitle = "n = 10k")
+```
+
+I observe that as the sample size increases, the distribution of sample values increasingly approximates the beta distribution from which it was sampled. 
+
+## (b)
+
+**Compare your estimates (for mean, median and 95% credible interval) against the true values of mean and median:**
+
+The mean, median and 95% credible interval are displayed below. These were calculated directly from the samples taken from the true posterior specified earlier;
+
+**Credible Intervals**
+
+```{r posterior CIs,comment = NA}
+#95% credible interval
+cat(("Sample 95% Credible Interval, n = 100"))
+cat(quantile(c(0.025,0.975),x =  sample_hundred$x))
+cat(("Sample 95% Credible Interval, n = 1000"))
+cat(quantile(c(0.025,0.975),x = sample_thousand$x))
+cat(("Sample 95% Credible Interval, n = 10k"))
+cat(quantile(c(0.025,0.975),x = sample_10k$x))
+cat(("Actual 2.5% and 97.5% quantiles from X ~ Beta(1.5,2.5)"))
+cat(dbeta(c(0.975,0.025),1.5,2.5))
+```
+
+**Medians**
+
+```{r posterior medians,comment = NA}
+#posterior median
+cat(("Sample Median, n = 100"))
+cat(quantile(c(0.5),x =  sample_hundred$x))
+cat(("Sample Median, n = 1000"))
+cat(quantile(c(0.5),x = sample_thousand$x))
+cat(("Sample Median, n = 10k"))
+cat(quantile(c(0.5),x = sample_10k$x))
+cat("True population median from X ~ Beta(1.5,2.5)")
+#cat(qbeta(0.5,1.5,2.5)) - slightly off!
+cat((a - (1/3))/(a+b-(2/3)))
+```
+
+**Means**
+
+```{r posterior means,comment = NA}
+#posterior mean
+cat(("Sample Mean, n = 100"))
+cat(mean(sample_hundred$x))
+cat(("Sample Mean, n = 1000"))
+cat(mean(sample_thousand$x))
+cat(("Sample Mean, n = 10k"))
+cat(mean(sample_10k$x))
+cat("True population mean from X ~ Beta(1.5,2.5)")
+cat(a/(a+b))
+```
+
+We can see from above that as the sample size increases, the limits of the 95% CI become increasingly close to the true 2.5% and 97.5% quantile values on the $Beta(a = 1.5,b = 2.5)$ distribution. The means and medians calculated also become closer to the true population medians and means of the $Beta(a = 1.5,b = 2.5)$ distribution, as $n$ increases.
+
+# Q6 
+
+**Assume that it is not possible to sample directly from a Beta distribution and therefore you have to use accept-reject method to sample from the Beta(1.5, 2.5). Find a Normal distribution that can be used as a candidate density (that is its support is wider than the Beta) and implement the accept reject algorithm for N=1000. Repeat this two more times by choosing a different Normal distribution each time (you could just change the sd or change both mean and sd). For each sample,**
+
+```{r acceptance alogirthm}
+options(digits = 3)
+acceptance_rejection_sampling.func <- function(m = 0.375,s = 0.25) {
+
+a= 1.5; b = 2.5
+x= seq(0,1,by = 0.01) #generating a sequence of x
+true_posterior = dbeta(x,a,b) #true posterior values
+#m= 0.375; s=0.25 #Finding posterior mean and variance using Importance sampling
+N = 1000 #importance density N(m,s^2)
+sample=rnorm(N,m,s)
+#mean(sample)          #verify mean and sd of the importance density
+#sd(sample)
+w = rep(0,N)  #creates a blank array of size N to store weights
+w = exp(log(dbeta(sample,a,b) - log(dnorm(sample,m,s))))
+M = max(w) #scaling
+N = 1000
+u = runif(N)
+acc_sample = NULL  #creating an array to store accepted sample value
+
+#w_acc is the ratio (target density)/(M*candidate density)
+w_acc = exp(log(dbeta(sample,a,b)) - log(dnorm(sample,m,s))- log(M))
+
+#accept-reject algorithm
+j=1
+
+for (i in 1:N)
+{
+  if(u[i]<=w_acc[i])
+  {acc_sample[j] = sample[i]
+  j= j+1}
+}
+
+Acceptance.vec = c("Number of accepted samples:",as.character(j-1),NULL)
+Acceptance_rate.vec = c("Acceptance rate:",as.character((j-1)/N),NULL)
+Posterior_mean.vec = c("Posterior mean:",as.character(round(mean(acc_sample),digits = 4)),NULL)
+P_median <- (c("Posterior median:",as.character(round(quantile(acc_sample,c(0.5)),digits = 4)),NULL))
+B_CI <- c("95% credible interval:",as.character(round(quantile(acc_sample,c(0.025)),digits = 4)),as.character(round(quantile(acc_sample,c(0.975)),digits = 4)))
+
+results.list <- list(Acceptance.vec,Acceptance_rate.vec,Posterior_mean.vec,P_median,B_CI)
+
+results.df <- rbind(results.list[[1]],results.list[[2]],results.list[[3]],results.list[[4]],results.list[[5]])
+results.df[1:4,3] <- NA
+results.df[is.na(results.df)] <- c("")
+results.df <- as.data.frame(results.df)
+colnames(results.df) <- c("Statistic","Value 1","Value 2")
+results.df
+}
+```
+
+
+# (a)  
+
+**Clearly specify the mean and sd of your Normal candidate density. What was the acceptance rate you obtained? (how many of the 1000 samples were accepted?)**
+
+I have specified the three parameters for the candidate densities by setting them as arguments to a function that returns various statistics about the parameter. I have chosen three pairs of parameter values for the candidate densities. One pair has a low std deviation and but the mean is off. One pair has a mean that is very inaccurate but has very heavy tails. The final pair has a dead-on mean and wide tails.; 
+
+```{r mean_sd candiate acceptance rate,echo = TRUE}
+acceptance_rejection_sampling.func(m = 0.3,s = 0.25)
+acceptance_rejection_sampling.func(m = 1,s = 3)
+acceptance_rejection_sampling.func(m = 0.375,s = 0.4)
+```
+
+From these results I will select $m = 0.375$ and $sd = 0.4$.
+
+# (b)
+
+**plot the histogram of your sample on top of the plot of the true posterior distribution,**
+
+From the histogram below, we can see how we have used sampling with A-R. We generate points in a uniform distribution, then use the ratio of our target density to our normal candidate density to selectively accept or reject points. The result is a distribution very close to the target density.
+
+```{r histogram of sample and true posterior distribution}
+m = 0.375; s = 0.4
+a= 1.5; b = 2.5
+x= seq(0,1,by = 0.01) #generating a sequence of x
+true_posterior = dbeta(x,a,b) #true posterior values
+#m= 0.375; s=0.25 #Finding posterior mean and variance using Importance sampling
+N = 1000 #importance density N(m,s^2)
+sample=rnorm(N,m,s)
+#mean(sample)          #verify mean and sd of the importance density
+#sd(sample)
+w = rep(0,N)  #creates a blank array of size N to store weights
+w = exp(log(dbeta(sample,a,b) - log(dnorm(sample,m,s))))
+M = max(w) #scaling
+N = 1000
+u = runif(N)
+acc_sample = NULL  #creating an array to store accepted sample value
+
+#w_acc is the ratio (target density)/(M*candidate density)
+w_acc = exp(log(dbeta(sample,a,b)) - log(dnorm(sample,m,s))- log(M))
+
+#accept-reject algorithm
+j=1
+
+for (i in 1:N)
+{
+  if(u[i]<=w_acc[i])
+  {acc_sample[j] = sample[i]
+  j= j+1}
+}
+x11()
+hist(acc_sample,prob=TRUE,main="Histogram of Acceptance Sample and True Distribution Curve",ylab = "Acceptance Sample x")
+curve(dbeta(x,a,b),x,add=TRUE,lwd=2,col="red")
+```
+
+
+# (c) 
+
+**compare your estimates (for mean, median and 95% credible interval) against the true values of mean and median.**
+
+```{r AR estimates and true values comparison}
+a = 1.5; b = 2.5 #true beta parameters
+cat("A-R Sampling Estimates")
+
+acceptance_rejection_sampling.func(m = 0.375,s = 0.4)
+
+cat("\n")
+cat("True Population Values")
+cat(c("Median: ",as.character((a - (1/3))/(a+b-(2/3)))))
+cat(c("Mean: " ,as.character((a - (1/3))/(a+b-(2/3)))))
+
+
+
+options(warn=0)
+```
+
+These estimates are reasonably close to the true parameter values. The acceptance rate is on the low side, but both the estimated mean and estimated median are within +/- of the true mean and median. Of course, this is unsuprising, given we have exactly to the exact true posterior to use. Nonetheless, these results broadly demonstrate the viability of such a method.
+
+**What do you observe?**
+
+I observe that 191 samples were accepted, making for a 19.1% acceptance rate. The posterior mean and median were close to the true median and mean. The 95% credible interval for the mean is quite wide, around whole standard deviation in either direction of the point estimate. This is likely results from using quite a high standard deviation in the candidate density.
+
+On running the function mutliple times, I notice that there is a high degree of variability in the number of accepted sample and statistics calculated from the posterior. Perhaps if we were to increase the number of points used to construct our candidate density, or if we increased the number of points sampled from the uniform distribution, we would achieve a lower degree of variation in our estimates.
+
+# 7  
+
+**For this question, use the Excel file speed on Moodle. This contains the MPG (miles per gallon) achieved by a certain Holden car at the given Speed. MPG is the response and Speed is the predictor variable. Plot this data (in Excel or R), label clearly and interpret the shape. Write down the regression model that you think will be the best fit for this data (based on visual inspection only - do NOT fit the regression line) and explain why!**
+
+```{r plot of speed data}
+speed.df <- read.csv("speed.csv")
+ggplot(data = speed.df) + geom_point(mapping = aes(x = Speed, y = MPG)) + geom_rug(mapping = aes(x = Speed, y = MPG)) + labs(title = "Scatterplot of MPG as a function of Speed", caption = "Rugs added to give an idea of marginal densities", ylab("Fuel economy (MPG)"),subtitle = "units of speed unknown ") + theme_light()
+```
+
+The regression model that will best fit this data is likely to be a piecewise regression model. A quadratic regression may be ok, but the sharp and clearly defined linear subcomponents of the scatterplot lead us to believe a piecewise model would be more appropriate. This would take the form;
+
+$$y_i = \beta_0 + \beta_1x_{i1} + \beta_2(x_{i1} - 40)x_{i2} + \epsilon_i$$
+Where the $x_{i2}$ is an indicator variable, taking the value 1 if $x_{i1}$ is greater than 40 (the approximate middpoint when this peak in the scatterplot is seen).
+
+**Write a pseudocode to infer the parameters of the regression model using the ABC method.**
+
+$1)$Check that for $\theta_i,...,\theta_M$ and $y_i...y_n$ that $n \leq M$
+
+\begin{itemize}
+
+  \item $set \, N \leftarrow n(y^*) \,; set M \leftarrow n(coefficients(model)) + 1$
+  \item $IF (M < N) \, \{break\};\ \, ELSE \, \{...\}$
+  \item In this instance, $\theta_i,...,\theta_M$ will be less than $y_i,...y_n$
+  \item We have fewer parameters than data points, so we are able to procede
+  \item The $+ 1$ is to allow for an estimate of the error term
+  
+\end{itemize}
+  
+$2)$Select $s(y_i)$ (ideally a sufficient statistic, but often a summary statistic) \newline
+
+\begin{itemize}
+
+\item Set $s \leftarrow function(quartiles(x, c(0.10,0.20,...,0.90)))$
+\item We set our summary statistic using the function with the parameters we wish to use
+\item This will take each sample $y_i$ which has equal $n$ to $y^*$ and calculate the summary statistic
+
+\end{itemize}
+
+$3)$Decide on $\epsilon$ (allowable error) -> this would be set to a reasonable quantity given the scale of the data e.g. 2, and the modified iteratively depending on the results of the algorithm 
+
+\begin{itemize}
+
+\item $set \, \epsilon \leftarrow 2 $
+
+\end{itemize}
+
+$3)$Decide on $d$, the distance function -> we will choose squared distance as the distance function
+
+\begin{itemize}
+
+\item $set \, d \leftarrow function((x - y)^2)$
+
+\end{itemize}
+
+$4)$ Critically, we must decide on a set of priors for the coefficients and error term in this regression. This is addressed in $7 \, a$.
+
+\begin{itemize}
+
+\item $set \, priors \, p_1,...p_M \, as functions f()_1,...,f()_M $
+
+\end{itemize}
+
+$5)$Sample $\theta_1,\theta_2,...,\theta_n \sim g(\theta)$
+
+\begin{itemize}
+
+\item $FOR \, EACH \, (i \, in \, 1:M) \, $ - looping 
+\item $\{\ y_i \leftarrow f(n)_i  \, \}\ $  - simulating data from prior functions
+\item $IF \, \{\ d(s(y_i),s(y^*) \leq \epsilon \}\ $ - checking distances of summary statistics
+\item ADD $\, d(s(y_i),s(y^*) \, \rightarrow di$
+\item $THEN \, \theta_i(y_i) \rightarrow \theta_i[i]$ - adding simulated $\theta$ to accepted $\theta$ sample
+\item $ELSE \, \{\} $ - else rejecting sample
+
+\end{itemize}
+
+$6)$ Arrange distances and select $\theta_i \,'s$
+
+\begin{itemize}
+
+\item Then SORT ASCENDING accepted $\theta_i,...\theta_n$ by $d_i \, to \, d_n$ - sorting the accepted $\theta \,'s$
+\item Accept $\theta_1, \, to \, \theta_M, M = (k/100)*N$ - accepting only the $k^{th}$ percentile of samples by distance
+
+\end{itemize}
+
+# (a) 
+
+**Clearly state the unknown parameters and for each, the prior distribution you would choose and why? Also explain the process you would follow to select the parameters for each of the prior distribution.**
+
+The unknown parameters are the regression coefficients, the regression intercept (which can be considered as a conefficient) and the error term. This error term will take a different prior to the estimates of the regression coefficients, because it must be positive. Hence using a bounded probability distribution, that prevents illogical estimates (e.g. of negative error) is ideal. The gamma distribution is a good candidate for the prior of the emma because it has a lower bound of zero and a very long tail, which allows for the possibility of large error values. For the cofficients, the normal distribution is good, as it has heavy tails which allow us to sample in such a way that we will achieve a good simulation of the posterior for each coefficient. We could construct a reasonable pair of parameter values for the normal prior by selecting a mean of one and a large standard deviation (around 3), producing a wide distribution centered around what looks to be reasonable values for the coefficients. The mean value of this normal prior might change with each coefficient.
+
+The process followed to select parameters would be to consider the data generating mechanism. The data generating mechanism for each set of data might vary wildly - for example, the mechanism behind the residuals (errors) produces values that are always equal to or greater than zero. We wish to select the a prior that closely mimics the data generating mechanism, or at least the output of the data generating generating mechanism (or the statistic calculated from the output of said mechanism). For example a sequence of binary states could be modelled as a binomial distribution, while probabilities might be modelled well by a beta distribution. The selection of the prior is where we bring our pre-existing knowledge into the analysis, so we may, for example, select a beta distribution weighted towards high probabilities by selecting the shape parameters appropriately.
+
+
+# (b) 
+
+**Discuss which summary statistics would you use for the ABC method and why.**
+
+Ideally I would find summary statistics that fufill the sufficiency property for estimating theta. However, in practice it is much more straight forward (and sometimes only possible) to use summary statistics which we do not know are sufficient or not.  The point of the using the summary statistics is to avoid the curve of dimensionality (it is very difficult to ensure $d[s(y_i),s(y^*)] \leq \epsilon$ for highly dimensional data). Ideally, we would directly compare $y^*$ and $y_i$. Hence we wish to strike a comprimise where our summary statistics captures enough information about $Y$ such that they can be used to estimate $\theta_i,...,\theta_M$. Hence I would choose deciles as a summary statistics for my distribution as it evenly captures information about $\theta$ without having to sample the full range of data. 
+
+# (c) 
+
+**Explain how you will simulate the data.**
+
+I will simulate the data using the appropriate distribution function in R. We simulate the data of each $y_i$ sample from the joint distribution of all priors selected for the regression coefficients and error. For example, we would calculate the joint distribution between all the priors, then use random sampling from this distribution to create our sample. 
+
+---
+
+Additional notes were found at the below links;
+
+---
+
+**Mathematics Learning Centre, The University of Sydney;** \newline
+sydney.edu.au/stuserv/documents/maths_learning_centre/thesecondderivative.pdf
+
+**Course notes for BIOS601: Introduction and Statistical models: Fall 2017, McGill University (Dr. James Hanley);** \newline
+medicine.mcgill.ca/epidemiology/hanley/bios601/Likelihood/Likelihood.pdf
+
+**Course notes for Statistics 580: Statistical Computing: 2009, Iowa State University (Assoc. Prof. Mervyn Marasinghe);** \newline
+public.iastate.edu/~mervyn/stat580/Notes/s09mle.pdf
+
+**Basics of Bayesian Statistics, Book Chapter, 36-463: Mutlilevel/Hierachical Models: 2009, Carnegie Mellon University (Dr. Brian Junker);** \newline
+stat.cmu.edu/~brian/463-663/week09/Chapter%2003.pdf
+
+**Reasoning regarding the use of the Uniform prior was found here;** \newline
+wiseodd.github.io/techblog/2017/01/01/mle-vs-map/
+
+**The equation for bayesian linear regression was found here;**
+towardsdatascience.com/introduction-to-bayesian-linear-regression-e66e60791ea7

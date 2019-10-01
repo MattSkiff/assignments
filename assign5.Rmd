@@ -1,0 +1,624 @@
+---
+title: "Case Study: Classification Trees and General Linear Models"
+author: "Matthew Skiffington"
+
+output: 
+  pdf_document:
+    fig_caption: yes
+---
+
+## Introduction
+
+The task of the assignment is to use a case study to compare two techniques from the four broad classes of techniques we have covered in STATS521-19A, taught by Dr. Steven Miller. 
+
+In this case, I have decided to compare and contrast classification trees and Generalised Linear models. The relationship between these two classes of models is defined more by their differences than their similarities.  
+
+Data selection: many interesting compendiums of resources are present on the internet. One particularly interesting site is kaggle.com, a popular data science competition website recently acquired by Google. For a comparison study, a relatively simplistic data set on an extremely relevant area to society and my interest (psychology) was chosen. Here, we will choose to model the variable of interest (number of suicides) as the response.
+
+```{r setup,include=FALSE}
+library(ggplot2) # Visualisation
+library(dplyr) # for table joining
+library(mice) # Imputation
+library(randomForest) # for Random Forest Imputation and Random Forests
+library(reshape2) # melting
+library(faraway) # for his idomatic 'sumary' function
+library(pscl) # for zero inflated poisson model functions
+library(MASS) # for estimatation of dispersion parameter for gamma model
+library(fitdistrplus) # for fitting distributions
+library(gridExtra) # for arranging ggplots
+library(mgcv) # for tweedie GLMs for zero inflation
+library(rpart) # for simple recursive partitioning for regression trees
+library(rpart.plot) # better tree plots than rpart
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(cache = TRUE)
+knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+
+
+```
+
+```{r wrap-hook,include=FALSE}
+#https://github.com/yihui/knitr-examples/blob/master/077-wrap-output.Rmd
+library(knitr)
+hook_output = knit_hooks$get('output')
+knit_hooks$set(output = function(x, options) {
+  # this hook is used only when the linewidth option is not NULL
+  if (!is.null(n <- options$linewidth)) {
+    x = knitr:::split_lines(x)
+    # any lines wider than n should be wrapped
+    if (any(nchar(x) > n)) x = strwrap(x, width = n)
+    x = paste(x, collapse = '\n')
+  }
+  hook_output(x, options)
+})
+knitr::opts_chunk$set(linewidth = 60)
+```
+
+---
+
+## Exploratory Data Analysis
+
+We'll initially begin with a simple exploratory data analysis in order to understand the scope and issues with our data.The data was sourced from the World Health Organisation (WHO). The data set provides information on key demographics, such as age, sex, population and year. Downloaded as a csv file and imported into R. 
+
+After a quick look at the data, we decided the addition of historical GDP per capita data (from the World Bank) had the potential to significantly increase the predictive power of the data. Per capita values from the World Bank was used as an alternative to manually adjusting total GDP figures with population estimates from the WHO. After some EDA with total GDP data, it is intuitive to understand that inflation adjusted GDP per capita can be seen as a more representative indicator of "welfare potential" than total values of GDP per country. This data has had all historic values of GDP per capita adjusted to constant 2010 US dollars.
+
+A more complex analysis may have made use of common indicators like the Human Development Index (HDI), but we reach tautological considerations when doing this (i.e. the suicide rate may be a component of a sub index of the HDI). Other measures, such as unemployment, crime and addiction could be included. As the analysis is mostly didactic, we will restrict the covariates to those present with the kaggle data plus GDP per capita. 
+
+```{r import}
+suicide.df <- read.csv("C:/Users/Matthew/Desktop/who-suicide-statistics/who_suicide_statistics.csv") # read in WHO suicide data
+# https://www.kaggle.com/sathutr/global-suicide-data
+gdp.df <- read.csv("C:/Users/Matthew/Desktop/assign5/world_bank_gdp_data.csv") # read in World Bank economic data
+# https://data.worldbank.org/indicator/ny.gdp.mktp.cd - not adjusted
+# https://data.worldbank.org/indicator/NY.GDP.PCAP.KD?locations=BS - adjusted to 2010 US dollars
+suicide.df$population <- as.numeric(suicide.df$population) # avoids integer overflow
+colnames(gdp.df)[c(1,2)] <- c("country","Country_Code")
+colnames(gdp.df) <- gsub("x","",colnames(gdp.df),ignore.case = T)
+molten_gdp.df <- melt(gdp.df,id = c("country","Country_Code","Indicator.Name","Indicator.Code")) # melting wide data to tall
+colnames(molten_gdp.df)[c(5,6)] <- c("year","gdp") 
+suicide.df$year <- as.factor(suicide.df$year)
+year_molten_gdp.df <- subset(molten_gdp.df, year %in% suicide.df$year)
+#https://stackoverflow.com/questions/1660124/how-to-sum-a-variable-by-group
+country_pops.df <- aggregate(suicide.df$population, by=list(year = suicide.df$year,country = suicide.df$country), FUN=sum) # aggregate by country and year 
+sum(unique(molten_gdp.df$country) %in% unique(suicide.df$country)) # checking correspondence of country names
+gdp_pops.df <- left_join(molten_gdp.df, country_pops.df, by = c("country" = "country","year" = "year"))
+gdp_pops.df$gdp_per_capita <- gdp_pops.df$gdp / gdp_pops.df$x
+gdp_per_capita_molten <- left_join(gdp.df,gdp_pops.df, by = c("country" = "country"))
+suicide_eco.df<- left_join(suicide.df, molten_gdp.df, by = c("year" = "year", "country" = "country"))
+suicide_eco.df <- suicide_eco.df[,c(1:6,10)] # removing redundant information - country codes and technical indicator name for GDP
+```
+
+We begin by taking a quick look at the data itself and a summary. We can see that almost all countries on earth are covered! This means this dataset would be affected by a tremendous amount of information related to suicide rate that isn't directly captured in the data; for example, rates of mental health issues, addiction issues, war and instability, cultural factors and etc. Useful for a simple comparatory analysis is that the data is
+
+* Not highly dimensional, for which machine learning methods would likely be more appropriate
+* Not a 'toy' data sets (i.e. mtcars) without having an overly complex structure (which would involve a lot of data wrangling)
+* Has a mixture of numerical and categorical data
+
+A key issue is whether to normalise the response (number of suicides) by population, to produce a rate. This is standard practice, so we will do this here, however it does complicate the analysis in terms of assumptions of relationships between the predictors and response somewhat. 
+
+```{r data views}
+head(suicide_eco.df) # view data
+summary(suicide_eco.df) # simple descriptive stats
+```
+
+An easy way to check the integrity of the data is to compare the population estimated for NZ in 2010 against the population estimated by Statistics New Zealand in 2010. If the two estimates are similar, we can assume there is nothing grossly incorrect with this variable and we can also assume we are not mis-interpreting the meaning of this variable. We can see from [Statistics New Zealand](http://archive.stats.govt.nz/browse_for_stats/population/estimates_and_projections/demographic-trends-2010/chapter1.aspx) estimates that the World Bank estimate seems reasonable (remembering that population below the age of 5 is excluded from suicide data).
+
+```{r data structure}
+length(unique(suicide_eco.df$country)) # number of countries
+levels(suicide_eco.df$age) # age ranges
+levels(suicide_eco.df$sex) # gender categorisation (biological2)
+sapply(suicide_eco.df[c(5:6)],sum,na.rm = T) # sums of numerical variables
+sum(suicide_eco.df[suicide_eco.df$country == "New Zealand" & suicide_eco.df$year == "2010",]$population) # checking population sums for NZ in 2010 against stats nz estimates
+```
+
+The sums alone are sobering. For the 63 billion "life years" under observation, we could perhaps say (loosely, due to birth and death processes) that there have been eight million suicides. We might also decide to investigate the large amount of missing data present in the dataset. At this point, the documentation from kaggle was reviewed in depth and found to be highly inadequate. Hence we switch to documentation from the [World Heath Organisation's (WHO) mortality database](http://apps.who.int/healthinfo/statistics/mortality/whodpms/). Based on a description of the relationship of how developed a country is to the quality of it's suicide data [WHO](https://www.who.int/mental_health/suicide-prevention/mortality_data_quality/en/), We decided to limit the scope of the analysis to that of countries classified as developed economies by the United Nations [Table A, Country Classification, UN/DESA](https://www.un.org/en/development/desa/policy/wesp/wesp_current/2014wesp_country_classification.pdf). The suicide statistics from these countries should be based off stronger reporting practices and involve less estimation and modeling on the part of the WHO.  Remarkably, this did not include the Republic of Korea (a country with very high rates of tertiary education, very strong health care, high GDP per capita, developed infrastructure and other indicators of progress). This list, shown below, mostly encompasses Western European Countries, the USA, Canada, UK, Australia and New Zealand.
+
+![UN Table of Developed Countries](figures/TableA.png)
+
+We check the countries are present and named similarly in the data, then restrict the data set to these countries (removing 65% of the data). 
+
+```{r reducing scope}
+developed_countries.vec <- c("Austria","Belgium","Denmark","Finland","France","Germany","Greece","Ireland","Italy","Luxembourg","Netherlands","Portugal","Spain","Sweden","United Kingdom","Bulgaria","Croatia","Cyprus","Czech Republic","Estonia","Hungary","Latvia","Lithuania","Malta","Poland","Romania","Slovakia","Slovenia","Iceland","Norway","Switzerland","Australia","Canada","Japan","New Zealand","United States of America")
+length(developed_countries.vec)
+sum(developed_countries.vec %in% suicide_eco.df$country)
+developed_suicides.df <- subset(suicide_eco.df, country %in% developed_countries.vec)
+1 - nrow(developed_suicides.df) / nrow(suicide.df) # removing 65% of the data
+dev_pop_suicide.df <- left_join(developed_suicides.df,gdp_pops.df[,c(1,5,7)],c("year" = "year","country" = "country"))
+dev_pop_suicide.df$gdp_per_capita <- dev_pop_suicide.df$gdp 
+dev_pop_suicide.df <- dev_pop_suicide.df[,c(1:6,9)] # removing total GDP and total pop vars
+dev_pop_suicide.df$suicide_rate_100 <- (dev_pop_suicide.df$suicides_no / dev_pop_suicide.df$population)*100000 # calculating suicides per 100,000
+dev_pop_suicide.df <- dev_pop_suicide.df[,c(1:4,7,8)] # removing number of suicides and population
+```
+
+The data now had GDP per capita added (at the year and country level, not for a given age and sex) and had the rate of suicides per 100,000 calculated and added (per gender, age bracket, year and country). Culturally, the biggest outlier is probably Japan, being the only Asian country on the list. We may wish to investigate this statistically later on. The next issue was that of data integrity. 
+
+Many rows of the full data did not include an estimate of suicides for a particular observation. This is an issue with missing data on the response variable. There are various ways to handle this scenario. Faraway lists four separate ways (pg 262):
+
+* Leave the missing values out of the analysis
+* Use the missing values as a discerned predictor
+* Include the missing values in the algorithm, or use surrogate splits
+* Impute the missing values, then run the algorithm
+
+Here, we have chosen to impute the missing values, via the MICE package.
+
+As both NAs and 0s are present for the same variable, it is reasonably fair to assume that NA truly indicates missing data, and not a suicide count of zero. Hence we will not filter these out, but may wish to implement a simplistic form of imputation, or filter them out.
+
+```{r NA handling}
+nrow(suicide_eco.df[is.na(suicide_eco.df$suicides_no),]) / nrow(suicide_eco.df) # proportion of missing suicide data original data
+nrow(dev_pop_suicide.df[is.na(dev_pop_suicide.df$suicide_rate_100),]) / nrow(dev_pop_suicide.df) # proportion of missing data on reduced scope data set
+```
+
+```{r md pattern main df,fig.cap="\\label{fig:figs}Missingness pattern for Suicide Data"}
+md.pattern(dev_pop_suicide.df,rotate.names = T) # missing pattern graph
+```
+
+Surprisingly, a higher proportion of data is missing for the developed countries than for the data overall. We decide to do a quick visualisation of the pattern of missing data via the popular MICE package. Per observation, some data is missing for GDP only, some for suicides only and some for both suicides and GDP. No data is missing for population or other demographic variables.
+
+As the techniques of classification and general linear models are the focus of our analysis, we will proceed quickly with the imputation, selecting a simple interpretable form, e.g. unconditional mean imputation. Unfortunately, this simply filled in the missing values with the overall mean of the suicide (249.5, with the United States excluded on that run). This is not suitable as a replacement for the missing data. Instead, we choose an algorithm that is known for having strong predictive accuracy - the random forest algorithm.
+
+```{r data manip,cache = T}
+no_na_dev_pop_suicide.df <- na.omit(dev_pop_suicide.df)
+# https://datascienceplus.com/imputing-missing-data-with-r-mice-package/
+filled_developed_suicides.df <- mice(dev_pop_suicide.df,m=1,maxit=10,meth='rf',seed=500) # multiply imputing suicide rate and gdp per capita via random forest
+dev_pop_suicide.df[which(is.na(dev_pop_suicide.df$suicide_rate_100)),]$suicide_rate_100 <- filled_developed_suicides.df$imp$suicide_rate_100$`1` # filling missing suicide rates with imputed ones
+dev_pop_suicide.df[which(is.na(dev_pop_suicide.df$gdp_per_capita)),]$gdp_per_capita <- filled_developed_suicides.df$imp$gdp_per_capita$`1` # filling missing gdp per capita values with imputed one
+dev_pop_suicide.df$country <- as.factor(dev_pop_suicide.df$country)
+dev_pop_suicide.df$year <- factor(dev_pop_suicide.df$year)
+```
+
+```{r missing pattern imputed data,,fig.cap="\\label{fig:figs}Missingness Pattern Imputed Data"}
+md.pattern(dev_pop_suicide.df,rotate.names = T) # missing pattern graph - checking imputation procedure has worked
+```
+
+Each data point represents the number of suicides per 100,000 people for a;
+
+* Particular *gender (male or females)*
+* Within an *age range* (5-14,15-24,25-34,35-54,55-74,75+)
+* In a particular *country* (from the 141 present in the WHO data)
+* With a given *GDP per capita* for that country
+
+```{r checking data}
+quantile(table(dev_pop_suicide.df$country)) # number of years * ages per country
+names(table(dev_pop_suicide.df$Country)[table(dev_pop_suicide.df$country) == 204])
+names(table(dev_pop_suicide.df$country)[table(dev_pop_suicide.df$country) == 456])
+```
+
+The minimum amount of data we will have for a country is 204 observations, while the maximum is 456. Eight countries have this much data. Most countries have most of the data range present, so we don't anticipate any major issues relating to this temporal asymmetry.
+
+```{r full page year facets gdp and suicide, fig.height = 9, fig.width = 7}
+#https://stackoverflow.com/questions/11214012/set-only-lower-bound-of-a-limit-for-ggplot
+
+# year variation 
+
+par(mai = c(0.1,0.1,0.1,0.1))
+ggplot(data = dev_pop_suicide.df) + 
+    geom_point(mapping = aes(x = gdp_per_capita, y = suicide_rate_100),alpha = 0.2) +
+    geom_smooth(mapping = aes(x = gdp_per_capita, y = suicide_rate_100)) + 
+    labs(title = "Suicide Rate per 100k against GDP per Capita (USD), by Year", y = "Suicides per 100,000", x = "GDP per Capita (USD)",subtitle = "Smooth added (default LOESS, span = 0.33)") +
+    theme_light() + 
+    facet_wrap(~year,shrink = T)  + 
+    expand_limits(y=0)
+```
+
+```{r full page year facets year and suicide,  fig.height = 9, fig.width = 7}
+
+# sex and year variation
+
+ggplot(data = dev_pop_suicide.df) + 
+    geom_point(mapping = aes(x = as.numeric(year), y = suicide_rate_100),alpha = 0.2) +
+    geom_smooth(mapping = aes(x = as.numeric(year), y = suicide_rate_100)) + 
+    labs(title = "Suicide Rate per 100k Year, by Sex", y = "Suicides per 100,000", x = "Year",subtitle = "Smooth added (default LOESS, span = 0.33)") +
+    theme_light() + 
+    facet_wrap(~sex,shrink = T)
+```
+
+```{r by sex and year plot}
+# https://stackoverflow.com/questions/1330989/rotating-and-spacing-axis-labels-in-ggplot2
+
+ggplot(data = dev_pop_suicide.df) + 
+    geom_histogram(mapping = aes(x = suicide_rate_100)) +
+    labs(title = "Suicide Rates per 100k, by Sex and Age Group", y = "Suicides per 100,000", x = "Year") +
+    theme_light() + 
+    facet_wrap(~sex+age,shrink = T) + 
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+```{r distribution of the response}
+ggplot(data = dev_pop_suicide.df) + 
+    geom_density(mapping = aes(x = suicide_rate_100),color = "red",fill = "pink") +
+    labs(title = "Distribution of Suicide Rate", y = "Suicides per 100,000", x = "Year",subtitle = "Smooth added (default LOESS, span = 0.33)") +
+    theme_light() + 
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+```{r time and age graphs, fig.height = 9, fig.width = 7}
+g1 <- ggplot(data = dev_pop_suicide.df, aes(x = year, y = suicide_rate_100,group = age,color = age))  + 
+    stat_summary(aes(group=age), fun.y=mean, geom="line",size = 1.5) +
+    labs(title = "Suicide Rates per 100k per Year, by Age", y = "Suicides per 100,000", x = "Year") +
+    theme_light() + 
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+    theme(legend.position="bottom") +
+    scale_x_discrete(breaks=c(1979,1997,2016))
+g2 <- ggplot(data = dev_pop_suicide.df, aes(x = year, y = suicide_rate_100,group = sex,color = sex))  + 
+    stat_summary(aes(group=sex), fun.y=mean, geom="line",size = 2) +
+    labs(title = "Suicide Rates per 100k, \n by Year and Sex", y = "Suicides per 100,000", x = "Year") +
+    theme_light() + 
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+    theme(legend.position="bottom") +
+    scale_x_discrete(breaks=c(1979,1997,2016))
+
+g3 <- ggplot(data = dev_pop_suicide.df, aes(x = year, y = suicide_rate_100,group = country,color = country))  + 
+    stat_summary(aes(group=country), fun.y=mean, geom="line",size = 0.5) +
+    labs(title = "Suicide Rates per 100k per Year, by Country", y = "Suicides per 100,000", x = "Year") +
+    theme_light() + 
+    facet_wrap(~country) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+    theme(legend.position="bottom") +
+    scale_x_discrete(breaks=c(1979,1997,2016))
+
+g4 <- ggplot(data = dev_pop_suicide.df, aes(x = year, y = suicide_rate_100,group = sex,color = sex))  + 
+    stat_summary(aes(group=sex), fun.y=mean, geom="line",size = 0.5) +
+    labs(title = "Suicide Rates per 100k per Year, by Sex and Age Group", y = "Suicides per 100,000", x = "Year",subtitle = "Smooth added (default LOESS, span = 0.33)") +
+    theme_light() + 
+    facet_wrap(~age)  + 
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+    theme(legend.position="bottom") +
+    scale_x_discrete(breaks=c(1979,1997,2016))
+
+grid.arrange(g1,g2,g4,ncol = 2, nrow = 2)
+```
+
+```{r time and country graph, fig.height = 9, fig.width = 7}
+g3
+```
+
+
+
+The response distribution is very skewed, and a high proportion of the data is sitting at, or near, zero. The plots above shows some powerful trends in the predictors, mostly by age and sex. Several descriptive facts are clear;
+
+* Male suicide rates are almost universally higher than female
+* Suicide rates of the very young (5-14) are very low
+* Suicide rates among the elderly (75+) are very high
+* Rates of suicide in several Eastern European countries are or have been comparatively high (Hungary, Slovenia, Estonia, Lithuania)
+
+The longitudinal plots above also highlight the recency of data for Croatia, Cyprus and Germany. Many countries have flat suicide rates, some have noticeable 'blips' and others exhibit strong temporal trends (e.g. recent declines in Eastern Europe)
+
+Which country an observation is from may also have an effect, but this is difficult to adequately visualise (without producing many graphs, or using an interactive medium). We would like to investigate what the effect of age, sex and country is and what the most 'at risk' groups are. We would also like to investigate, or perhaps control for, economic welfare as a factor, via the GDP per capita variable. The generalised linear model is good for this, as we are able to generalise what the 'y' in our traditional regression model would be.
+
+Additionally, it would be useful if we could formulate predictions for the number of suicides that might be expected to occur, or have occurred. An example of such an application can be found with sentiment analysis of social media ("Advanced Daily Prediction Model for National Suicide Numbers with Social Media Data", Lee et al). This reflects a need for a model specialising in description and inference, i.e. a general linear model. This would involve a model optimised for prediction. This is what we will spend the classification trees segment developing. We can think of this as a generalisation of the 'e' in our traditional regression model, with the removal of parametric requirements.
+
+To check any advanced analysis is actually necessary, we will fit a simple OLS regression. We also edit the data to allow for log transformation of the response.
+
+```{r ols,fig.cap="\\label{fig:figs}Diagnostic Plots for Linear Model"}
+lm <- lm(suicide_rate_100 ~ .,data = dev_pop_suicide.df)
+par(mfrow = c(2,2))
+plot(lm)
+```
+
+The diagnostics for simple OLS are strikingly bad. The residuals versus fitted shows a very strong curvilinear trend, in addition to non-constant variance. The residuals on the normal QQ plot deviate in a highly significant way (long tail), such that the residuals could not possibly be said to be normally distributed. The scale location plot shows strongly varying spread about the residuals (again, indicating non-constant variance) and additionally, the scale of the residuals changes drastically with the fitted values. The residuals versus leverage plot is a little difficult to interpret, so we will produce a plot of cooks distances.
+
+```{r cooks distances,fig.cap="\\label{fig:figs}Cooks Distances for Linear Model"}
+barplot(cooks.distance(lm), main = "Cooks Distances",ylab = "Cooks Distance",xlab = "Index")
+```
+
+As none of the points exceed 0.5 or 1, we can be convinced none are influential. This is intuitive anyway, as the dataset is very large and should therefore be reasonably robust to outlying response/predictor combinations. It's obvious from the diagnostics that a regular OLS regression is inappropriate. Perhaps we should log the response? To do this, we will need to add a small amount to the zeros present. This is not a good solution, but gets around the problem for now.
+
+```{r log ols,fig.cap="\\label{fig:figs}Diagnostic Plots for Log Linear Model"}
+log_lm <- lm(log(suicide_rate_100+0.01) ~ .,data = dev_pop_suicide.df)
+par(mfrow = c(2,2))
+plot(log_lm)
+```
+
+The QQ plot and scale location plot are still of concern. The residuals versus fitted plot looks better, showing less trend in the data and reasonably constant variance.
+
+---
+
+## Generalised Linear Models
+
+We start with a Poisson regression, often used for skewed responses where the response cannot be less than zero. The nature of the data, which shows suicide as a small "success" probability against a large total ("life years") is an example of where the Poisson distribution would naturally arise (Faraway 2016, pg 83). Given the small dimensionality of the data set, we start by including all predictors. 
+
+```{r fitting linear models 1}
+# faraway code
+modp <- glm(suicide_rate_100 ~ ., family = poisson, data = dev_pop_suicide.df)
+sumary(modp)
+```
+
+```{r fitting linear models 1 diagnostics,fig.cap="\\label{fig:figs}Diagnostic Plots for Poisson GLM"}
+par(mfrow = c(2,2))
+plot(modp)
+halfnorm(hatvalues(modp))
+dev_pop_suicide.df[hatvalues(modp)>0.06,]
+dev_pop_suicide.df[hatvalues(modp)>0.04 & hatvalues(modp) < 0.06,]
+termplot(modp,partial=TRUE,terms=1)
+```
+
+Here we see the effect of having a comparatively large amount of data, for model fitting purposes. Almost every single factor is treated as extremely significant, barring several countries and GDP per capita. The proportion of deviance explained is 1 - 55679/329361; 83%. This is a high proportion, but the deviance is still very large. A potential issue here is that the cell size is very small: we have 6 (age groups) * 36 (countries) \* (up to) 37 (years) \* 2 (genders) = 15984 combinations of the categorical predictors. The structure of the data means that unless we leave out some predictors, or use random effects, we might be over-fitting the model. 
+
+The use of random effects may be a good option here, as we are currently correctly treating age groups as fixed effects, but perhaps wish to shelve the complexity of the predictive information wrapped up in the country variable and instead treat these as randomly distributed mixtures of reasonably similar living conditions.
+
+Looking at the residuals versus fitted, we see a clear increase of variance with the mean predicted values, as expected with a Poisson regression. The QQ plot is non-normal. We see that there are no influential points that affected the model, as we might also expect with such a dataset. However, from the half normal plot, we can see several points away from the bulk of the data. These have low leverages, but perhaps diverge enough to warrant inspection. Finally, from the scale-location plot, there appears to be a strong trend left in the data.
+
+The high leverage values appear to come from the extremely high suicide rates observed in Hungary and other eastern European countries. Fortunately, there are few observations that show a rate of suicide this high. Since these are totally legitimate observations, and likely the only source of information of what the predictors might look like at high rates of suicide, we decide to leave the observations in. There are several variations we can now try: **overdispersion**, **rate models** and **zero-inflated count models**.
+
+---
+
+It may make sense to go back to the original formulation of the data, i.e. using the population and suicide variables separately. We reinstate these, and remove suicides per 100,000.  Then we refit the Poisson model, this time with an appropriate (integer) suicide response (as opposed to suicide rate) and include population as an offset (i.e. remove it as a parameter for estimation, forcing it's coefficient to be one, such that suicides scale with population). To check this is reasonable, we model population as a regular fixed term (not as an offset) first, and see if it's coefficient is close to one, indicating it is suitable for use as an offset variable.
+
+
+```{r rate model,cache=T}
+rate.df <- dev_pop_suicide.df # structuring data for rate model
+rate.df <- rate.df[,c(1:5)]
+developed_suicides.df <- subset(suicide_eco.df, country %in% developed_countries.vec)
+rate.df$population <- developed_suicides.df$population
+rate.df$suicides_no <- developed_suicides.df$suicides_no
+
+filled_rate.df <- mice(rate.df,m=5,maxit=1,meth='rf',seed=500) # imputes missing suicide rates
+
+rate.df$suicides_no[which(is.na(rate.df$suicides_no))] <- filled_rate.df$imp$suicides_no$`1`[which(is.na(rate.df$suicides_no))] # replaces imputed values
+
+(ratemod <- glm(suicides_no ~ .,family = poisson,data = rate.df))
+```
+
+In theory, if population were to be a candidate for an offset, it's coefficient should be near one. We can log the population variable, which achieves a population coefficient close to one, but this is not reflective on the relationship we would expect from population and suicides. If we include population as an offset anyway, we encounter numerous starting value errors, suggesting this is not a good idea. Ultimately, the path of least resistance, and standard practice, is to continue with the suicide count normalised by population.
+
+We may wish to account for over-dispersion, as we can see the response distribution is **very** skewed and we might not expect the variance to vary constantly with the mean. If the data is indeed over-dispersed, then we cannot trust the standard errors (and hence p-values) we have observed above. We check this graphically below;
+
+```{r mean variance relation poisson model}
+plot(log(fitted(modp)),log((dev_pop_suicide.df$suicide_rate_100-fitted(modp))^2), xlab= expression(hat(mu)),ylab=expression((y-hat(mu))^2),  col = rgb(red = 0, green = 0, blue = 0, alpha = 0.1),main = "Examing mean-variance relationship")
+abline(0,1,col = 'red')
+```
+
+We can see that the relationship is roughly linear (although the number of observations makes visual estimation difficult), but that variance increases faster than the mean. Hence we try a quasi-Poisson model which allows for over dispersion. We then test the significance of the predictors using F testing.
+
+```{r over dispersed model}
+modd <- glm(suicide_rate_100 ~ ., family = quasipoisson, data = dev_pop_suicide.df)
+drop1(modd,test="F")
+```
+
+From the F-tests, we can see that country, year, sex and age are all highly significant. GDP per capita is non significant.  
+
+We would like to adjust our model to handle the number of zeros appearing, which are more frequent than a regular Poisson distribution would suggest. We check the number of zeros is more than expected, using histograms. As we have sufficient data to make assertions about the response distribution, we will check to see if a gamma distribution is reasonable as well.
+
+```{r distribution checking histogram,fig.cap="\\label{fig:figs}Checking Response Distribution via Histograms"}
+par(mfrow = c(1,3))
+hist(rpois(15000,lambda = mean(dev_pop_suicide.df$suicide_rate_100)),main = "Poisson distribution with \n u = u(suicide rate)", xlab = "Suicide Rate per 100k",col = "red",breaks = 30)
+hist(x = dev_pop_suicide.df$suicide_rate_100,main = "Response distribution of \n Suicide Rate", xlab = "Suicide Rate per 100k",col = "red",breaks = 30, sub = "blue line: rate = 0.04, shape = 0.8")
+x <- seq(0,100,by=0.1)
+lines(x,dgamma(x,shape = 0.8,rate = 0.04)*80000, type="l",col = 'blue')
+hist(rgamma(15000,shape = 0.8, rate = 0.04),main = "Gamma distribution", xlab = "Suicide Rate per 100k",col = "red",breaks = 30,sub = "rate = 0.04, shape = 0.8")
+x <- seq(0,100,by=0.1)
+lines(x,dgamma(x,shape = 0.8,rate = 0.04)*80000, type="l",col = 'blue')
+
+```
+
+Checking Gamma fit:
+
+```{r dist check gamma,fig.cap="\\label{fig:figs}Diagnostic Plot for Fitting Response to a Gamma Distribution"}
+fit.gamma <- fitdist(dev_pop_suicide.df$suicide_rate_100, distr = "gamma", method = "mme")
+par(mfrow = c(2,2))
+plot(fit.gamma)
+```
+
+Checking Normal fit:
+
+```{r dist check norm,fig.cap="\\label{fig:figs}Diagnostic Plot for Fitting Response to a Normal Distribution"}
+fit.norm <- fitdist(dev_pop_suicide.df$suicide_rate_100, distr = "norm", method = "mme",discrete = F)
+par(mfrow = c(2,2))
+plot(fit.norm)
+```
+
+Checking Poisson fit:
+
+```{r dist check pois,fig.cap="\\label{fig:figs}Diagnostic Plot for Fitting Response to a Poisson Distribution"}
+fit.poisson <- fitdist(dev_pop_suicide.df$suicide_rate_100, distr = "pois", method = "mme",discrete = F)
+par(mfrow = c(2,2))
+plot(fit.poisson)
+```
+
+The Poisson model does not appear to be a good fit, approximating the normal distribution with the given mean and sample size. However, the gamma distribution, after some adjustment of shape and scale, looks to be a good fit. The gamma distribution is used for modeling continuous skewed responses (Faraway), and so is fit for purpose. There are still zero inflated counts and the model is less skewed than the parameters we have used.
+
+We can also see from the distribution fitting procedure and diagnostics that the gamma would be a very good fit (barring the extreme outliers seen on the QQ plot and the zero inflation issue). We run the same procedures on the Poisson and normal distribution and observe poor fits (the Poisson fitting procedure density plot seems to have hit some snags, likely due to the conflict between the discrete distribution and continuous data).
+
+To get around the presence of zeros (which the gamma distribution is not compatible with) we can add a small amount to the response. This is a 'hackish' way of doing things, and likely violates the assumptions of the GLM and invalidates the fitting procedure. There are packages that implement hurdle models and GLMMs (such as glmTMB) which can handle gamma GLMs with zeros [discussion here](https://stackoverflow.com/questions/43615260/running-a-glm-with-a-gamma-distribution-but-data-includes-zeros). Interestingly, it's unreasonable to suggest there is a separate process for populations have no suicides, likely this is just an artifact of small population brackets combined with a low frequency event. Hence we have no need to model the process behind zeros separately to the process behind non-zero data (i.e. by using a latent variable in a hurdle model).
+
+```{r gamma model,fig.cap="\\label{fig:figs}Diagnostic Plots Gamma Model"}
+# https://stackoverflow.com/questions/50413870/non-positive-values-not-allowed-for-the-gamma-family
+# cullen and frey graph for checking response distribution?
+gmdl <- glm(suicide_rate_100+0.01 ~ ., family=Gamma(link=log), data = dev_pop_suicide.df)
+summary(gmdl)
+par(mfrow = c(2,2))
+plot(gmdl)
+#plot(residuals(gmdl) ~ predict(gmdl,type="link"),
+#xlab=expression(hat(eta)),ylab="Deviance residuals") - same result as regular diagnostic plot
+```
+
+The residuals from the model look decent. As the residuals have been scaled for variance, we should be keeping an eye on heteroscedasticity. There is a band present in the residuals vs fitted plot which clearly represents the mismodeled zeros (the sweeping line underneath the main cluster of data) but otherwise there is no major trend left in the data, and the variance is reasonably constant (although there is a small group of outliers at the lower end of the predict values). As expected, the Normal QQ plot looks distinctly non-normal. The scale-location plot shows reasonably constant variance, but there is some difference in variance, as shown by the red line.
+
+To __properly__ handle zero inflation issues a quick survey of the literature reveals Delta-Gamma models and Compound Poisson Gamma models (DG, CPG) to be common. Faraway describes both the use of hurdle models and Tweedie models to deal with zero inflation. Also mentioned is the use of Poisson and negative binomial models, but as our data is not integer and clearly not Poisson distributed, I am reluctant to implement this. He mentions that Tweedie GLMs have the useful property of being able to model Y = 0 and positive responses (without separation of the model into separate components). The p parameter is estimated by the model fitting procedure. In mgcv, it is restricted to between 1 and 2, where 1 is Poisson and 2 is Gamma. We try this (note that this uses the general additive model function, but only fixed terms are included);
+
+```{r zero inflated, cache=TRUE ,fig.cap="\\label{fig:figs}Diagnostic Plots for Tweedie GLM"}
+# VERY long training time!
+twmod <- gam(suicide_rate_100 ~ year+age+gdp_per_capita+sex+country, family=tw(link="inverse"), data = dev_pop_suicide.df)
+#gam.check(twmod)
+# https://stats.stackexchange.com/questions/137227/what-is-the-canonical-link-function-for-a-tweedie-glm
+# https://stackoverflow.com/questions/22275610/how-to-get-only-the-plots-from-gam-check
+
+b <- twmod
+par(mfrow = c(2,2))
+type <- "deviance"  
+resid <- residuals(b, type = type)
+linpred <- napredict(b$na.action, b$linear.predictors)
+observed.y <- napredict(b$na.action, b$y)
+qq.gam(b, rep = 0, level = 0.9, type = type, rl.col = 2, 
+       rep.col = "gray80")
+hist(resid, xlab = "Residuals", main = "Histogram of residuals")
+plot(linpred, resid, main = "Resids vs. linear pred.", 
+     xlab = "linear predictor", ylab = "residuals")
+plot(fitted(b), observed.y, xlab = "Fitted Values", 
+     ylab = "Response", main = "Response vs. Fitted Values")
+lines(x = c(0:200),y = c(0:200),col = 'red')
+```
+
+I disagree with the concept that predictors might have a multiplicative effect on the response, and hence do not use the log link. Instead, we will go with the link common (canonical) for the gamma distribution, the inverse link. 
+
+The response vs fitted appears to have data distributed evenly about both sides of the diagonal line, indicating a good fit. The histogram of the residuals looks normal. However, the QQ plot looks non normal. Additionally, the residuals versus linear plot has a large discontinuity. Given that we are looking for a random pattern of variation, and there are two very clear clusters of residuals, this is concerning.
+
+Overall, it is difficult to settle on any of these models as a strong source of inference. While the EDA revealed some interesting descriptive trends, fitting a model to an over dispersed, skewed, continuous and zero inflated response distribution like suicide rate per 100,000 population is very difficult. It is possible adopting a GLMM approach, using generalised additive models or including more predictor variables could alleviate this dilemma. Additionally, an analysis accounting for the nested structure of some of the variables (i.e. GDP per capita under country) using multilevel models could improve the fit.
+
+```{r final glm summary}
+summary(twmod)
+```
+
+The final interpretation of the model we have chosen as best "fitting" the data (the Tweedie model), is as follows;
+
+The p parameter is estimated as 1.5, indicating an even mixture between Gamma and Poisson distributions. As before, recent years tend to be more significant than earlier years - however, this could be an artifact of the reduced sample sizes (i.e. number of countries which have historic data going back that far) for those years. Because we have used the inverse link, we take the exponent of the coefficient estimates to understand their effects. This means coefficients that are highly negative indicate a positive effect on suicide rates and coefficients that are positive and large indiciate a negative effect on suicide rates (see the 5-14 age group for an example).
+
+---
+
+## Trees
+
+While trees are predominately and originally used for classification, here we will be extending them to a regression scenario (numerical, not categorical response). Unlike the GLM section, we do not need to make parametric assumptions i.e. by specifying a response distribution, error correlations or mean variance relationships.
+
+```{r fitting classification trees}
+set.seed(1)
+dev_pop_suicide.df$country <- recode(dev_pop_suicide.df$country, # recoding data for tree viz
+       Australia = "AUS",
+       Austria = "AUT",
+       Belgium = "BEL",
+       Bulgaria = "BGR",
+       Canada = "CAN",
+       Croatia = "HRV",
+       Cyprus = "CYP",
+       `Czech Republic` = "CZE",
+       Denmark = "DNK",
+       Estonia = "EST",
+       Finland = "FIN",
+       France = "FRA",
+       Germany = "DEU",
+       Greece = "GRC",
+       Hungary = "HUN",
+       Iceland = "ISL",
+       Ireland = "IRL",
+       Italy = "ITA",
+       Japan = "JPN",
+       Latvia = "LVA",
+       Lithuania = "LTU",
+       Luxembourg = "LUX",
+       Malta = "MLT",
+       Netherlands = "NLD",
+       `New Zealand` = "NZL",
+       Norway = "NOR",
+       Poland = "POL",
+       Portugal = "PRT",
+       Romania = "ROU",
+       Slovakia = "SVK",
+       Slovenia = "SVN",
+       Spain = "ESP",
+       Sweden = "SWE",
+       Switzerland = "CHE",
+       `United Kingdom` = "GBR",
+       `United States of America` = "USA",
+       .default = NULL, .missing = NULL)
+(rmod <- rpart(suicide_rate_100 ~ .,dev_pop_suicide.df))
+plot(rmod,compress = T,uniform = T,branch = 0.4, margin = 0.1)
+#rpart.plot(r_dev_pop_suicide.df)
+```
+
+Adding text results in a jumbled mess, due to the number of factor levels involved. We use the package rpart.plot and recode the country names to their ISO codes in order to create a readable tree. The tree has 14 end nodes, reflecting the achieve balance between complexity and classification accuracy. Interestingly, as expected, sex is a top level split, showing it's importance. We then see age as the next split, on the age groups we expect (i.e. separating the old and young). Some more complex splits then occur on country. Given that there are ~15,000 possible combinations in the data, it's fair to say the regression tree has compressed the necessary predictive information down to a manageable level (we can imagine a situation where the tree formed is a 15,000 leaf monstrosity, in essense a convoluted look up table).
+
+```{r rpart tree r2,fig.cap="\\label{fig:figs}Regression Tree Structure"}
+1-sum(residuals(rmod)^2)/sum((dev_pop_suicide.df$suicide_rate_100-mean(dev_pop_suicide.df$suicide_rate_100))^2)
+```
+
+We achieve an R-squared of 75%, which indicates the model is responsible for quite a high proportion of variation in the response. This is comparable to the deviance explained proportions we were achieved using GLM. 
+
+```{r full page tree diagram,  fig.height = 9, fig.width = 7,fig.cap="\\label{fig:figs}Regression Tree labelled"}
+rpart.plot(rmod,type = 2,fallen.leaves = T, yesno = T, split.border.col = 1)
+```
+
+Regression tree diagnostics are shown below:
+
+```{r classification trees diagnostics}
+par(mfrow = c(2,2))
+plot(jitter(predict(rmod)),residuals(rmod),xlab="Fitted",ylab="Residuals")
+abline(h=0)
+qqnorm(residuals(rmod))
+qqline(residuals(rmod))
+plotcp(rmod)
+printcp(rmod)
+```
+
+We can see non-normality in the residuals and a relatively constant pattern of variance, with no major trend present. The cp plot displays the trade off between the size of the tree and error. We can see error decreases as the complexity of the tree increases - which is not guaranteed by any measure. We can see between the second and three split, the largest reduction in error is made. This error (xerror) is actually the cross validated error, and so is a fair measure of the fit of the tree to the data. The standard errors are very low, so even if we follow Faraway's suggestion of adding the standard error to the minimum xerror and selected the smallest tree, we end up with the same tree.
+
+Using simplicity as a guiding principle, we could select the tree that only has three splits (as this is responsible for the majority of the error minimization), but for a large data set that already reduces a complex issue down to a relatively limited set of predictors, this seems overly parsimonious Hence we keep the tree selected by the rpart function.
+
+A key consideration of decision trees is their relative instability compared to GLM models, which tend to be robust. On rerunning the model, we might find a different tree. Additionally, deleting or adding a few observations has the potential to, again, restructure the entire tree.
+
+```{r predictions}
+(rmod_small <- rpart(suicide_rate_100 ~ ., dev_pop_suicide.df[sample(nrow(dev_pop_suicide.df),nrow(dev_pop_suicide.df)/2),])) # forming decision tree from a random sample of half the original dataset
+```
+
+Similar to Faraway's example, we note the top level splits are very similar (with similar predicted suicide levels at the higher leaves), but vary more at the lower levels of the tree.
+
+Another method we can try is the random forest algorithm. Here we are beginning to overlap with ensemble methods from machine learning, as a random forest of decision trees is actually bagging applied to a learner - which can be performed on any learner, actually. The best results tend to come from unstable learners (otherwise not much is gained from combining predictions for X number of models that are identical due to how robust they are).  
+
+```{r forest}
+fmod <- randomForest(suicide_rate_100 ~ .,dev_pop_suicide.df)
+plot(fmod,main = "Random Forest CV error")
+```
+
+We see the error is already minimised by about 150 trees and adding extra trees results in a gradual reduction in error. We attempt variations, stratifying variously by age, country and sex, but the non-stratified model achieves the best error. Since this did not take long (compared to the ~20 minutes to run the Tweedie GLM), we will up the ante slightly;
+
+```{r forest 3k}
+fmod_3k <- randomForest(suicide_rate_100 ~ .,dev_pop_suicide.df, importance = T,ntree = 3000)
+plot(fmod_3k,main = "3000 trees")
+```
+
+We will also try limited predictor subset sampling to improve the performance of the tree. This forces more diversity in the trees as there are only a limited subset of predictors that can be selected to make the split at each decision tree node. We see below a table illustrating the effect of different subset sizes on CV-MSE. Unsurprisingly, this is maximised at n = 1.
+
+```{r predictor subsets,cache = T}
+# long time to run!
+cvr <- rfcv(dev_pop_suicide.df[,-6],dev_pop_suicide.df[,6],step=0.8)
+cbind(nvars=cvr$n.var,MSE=cvr$error.cv)
+```
+
+We see that MSE is minimised when the Random Forest is trained on 4-predictor subsets. Hence, as there is an over 10% decrease in error when this method is used, we retrain the model using n = 4 predictor subsets at each node:
+
+```{r rf with subsets}
+subsets_fmod <- randomForest(suicide_rate_100 ~ .,dev_pop_suicide.df,mtry = 4)
+```
+
+
+```{r partial dependance plots full page,  fig.height = 9, fig.width = 7}
+par(mfrow = c(3,2))
+partialPlot(subsets_fmod, dev_pop_suicide.df, "country", main="")
+partialPlot(subsets_fmod, dev_pop_suicide.df, "age", main="")
+partialPlot(subsets_fmod, dev_pop_suicide.df, "sex", main="")
+partialPlot(subsets_fmod, dev_pop_suicide.df, "year", main="")
+partialPlot(subsets_fmod, dev_pop_suicide.df, "gdp_per_capita", main="")
+```
+
+These plots reveal some interesting effects. The effects shown are conditional on the variables, i.e. the plots shown are partial dependence plots. While the "country" plot is a bit difficult to interpret, we can find the outliers if we reference the country codes, show below;
+
+```{r codes country}
+unique(dev_pop_suicide.df$country)
+```
+
+Hungary, Slovenia, Lithuania, Estonia and Latvia all show up in the model as associated with high suicide rates. Being male is associated with a high suicide rate, as is a relatively low (for a developed country) GDP per capita (less than 20,000). We can see that the model suggests there has been a gradual decline in the suicide rates temporally (i.e. recent years have less of an "effect" than the 80s and 90s). Additionally, younger age groups are less associated with suicide than older age groups.
+
+We can also gain an idea of predictor importance by checking the model statistics;
+
+```{r importance}
+importance(subsets_fmod)
+```
+
+While not quite as decisive as p values, we see that year and GDP per capita appear to relatively unimportant variables, while sex, age and country are most important. This statistic is calculated via the difference in MSE when OOB (out of bag) cases are used from each bootstrap sample, the predictor of interest permuted, the MSE calculated and the difference in MSE calculated. This is repeated over all bootstraps. Hence, the higher the value, the more error-reducing (or informative) the variable.
+
+This random forest model can now be used for predictive purposes, e.g. forecasting, or could be used for imputation purposes, similar to the use of the mice package earlier in this analysis. We could also examine it's tree structure (similarily to before), to gain an idea of which variables at what values might determine high or low suicide rates and with what importance. The nested structure of the tree lends itself to an understanding of the interactions between variables - an analytical facet we did did not have a chance to explore with the GLM models.
+
+## Conclusion
+
+In conclusion, for predictive power, it seems that classification trees are very strong, especially when used in an ensemble such as random forest. The use of cross validation provides a certain confidence that is difficult to obtain from parametric models. However, these ensemble methods limit interpretability and descriptive power. 
+
+In contrast, GLM provides for a strong inferential model of the response, but we encounter serious difficulties in adequately parametrically modeling the unusual response variation without resorting to excessive transformations and the like - sacrificing the interpretability and inferential power we desired in the first place.
+
+Ideally, the analysis would have included a section of hypothesis testing, a bit on variable selection (although, as discussed, this is mostly not neccesary due to the structure and nature of the data), and a section on predictive accuracy (i.e. via the use of a test/train set - although most decision trees functions already use CV error in their programming). The inclusion of these sections would make for a holistic comparison between methods.

@@ -1,0 +1,670 @@
+---
+title: "Assignment 2"
+author: "Matthew Skiffington"
+date: "10 April 2018"
+output: 
+  html_document: 
+    toc: true
+    toc_depth: 4
+    toc_float: true
+    code_folding: show
+    self_contained: true
+    print: false
+    
+---
+***
+```{r setup}
+
+library(knitr)
+library(rmarkdown)
+library(ggplot2)
+library(gridExtra)
+library(alr3)
+#library(DescTools)
+#library(gplots)
+opts_chunk$set(fig.width = 12)
+opts_chunk$set(fig.height = 10)
+opts_chunk$set(warning = F)
+opts_chunk$set(strip.white = F)
+opts_chunk$set(comment = "")
+opts_chunk$set(results = 'hold')
+```
+
+Thankfully, another R user provided a function to emulate minitab output (he also uses code from a stackoverflow user). The two references for the code are provided below. I have edited the code slightly to extend the legend (only with N and a shapiro test - anderson darling requires another package, which I tend to avoid if possible) and to add alpha to the legend;
+
+>"http://aleph-nought.blogspot.co.nz/2013/03/solved-recreate-minitab-normal.html"
+
+>"http://stackoverflow.com/questions/3929611/recreate-minitab-normal-probability-plot"
+
+```{r minitab probability plot, echo = T}
+minitab_normal_prob_plot <- function(data, x_label) {
+   
+    # The labels for the y-axis, corresponding to percentiles
+
+    y_axis_labels = c(1,5,10,20,30,40,50,60,70,80,90,95,99)
+
+    # Lengths, mean, and sd of data
+
+    n = length(data)
+    my_mean = mean(data)
+    my_sd = sd(data)
+
+    ### Set up the y-axis values
+
+    # Translate labels to decimal percentages
+
+    percentages = y_axis_labels / 100
+
+    # Convert percentages to z-values and shift so that all values are >= 0
+
+    y_axis_points = qnorm(percentages)
+    y_shift = y_axis_points[1]
+    y_axis_points = y_axis_points - y_shift
+
+    # The minimum and maximum y values
+
+    y_min = y_axis_points[1]
+    y_max = y_axis_points[length(y_axis_points)]
+
+    ### Calculate the main data set
+    # x and y values per http://en.wikipedia.org/wiki/Normal_probability_plot.
+
+    x_data_points = sort(data)
+
+    data_percents = c()
+    for(i in 1:n) {
+        if (i == 1) {
+            data_percents[i] = 1 - 0.5^(1/n)
+        } else if (i == n) {
+            data_percents[i] = 0.5^(1/n)
+        } else {
+            data_percents[i] = (i - 0.3175)/(n+0.365)
+        }
+    }
+
+    ### Trend line calculation
+    # Project a line represented expected distribution values on assumption
+    # that data is normal.
+
+    trend_x0 = qnorm(percentages[1], mean = my_mean, sd = my_sd)
+    trend_x1 = qnorm(
+            percentages[length(percentages)], mean = my_mean, sd = my_sd
+    )
+
+    # Convert percents to z-values and shift as before
+
+    y_data_points = qnorm(data_percents) - y_shift
+
+    ### Set up the envelope
+    # Stolen from
+    # http://stackoverflow.com/questions/3929611/recreate-minitab-normal-probability-plot
+
+    library(MASS)
+    qprobs<-qnorm(percentages)
+    fd<-fitdistr(data, "normal") #Maximum-likelihood Fitting of Univariate Dist from MASS
+    xp_hat<-fd$estimate[1]+qprobs*fd$estimate[2]  #estimated perc. for the fitted normal
+    v_xp_hat<- fd$sd[1]^2+qprobs^2*fd$sd[2]^2+2*qprobs*fd$vcov[1,2] #var. of estimated perc
+    xpl<-xp_hat + qnorm(0.025)*sqrt(v_xp_hat)  #lower bound
+    xpu<-xp_hat + qnorm(0.975)*sqrt(v_xp_hat)  #upper bound
+
+    ### Set up the x-axis
+
+    x_min = min(c(data, trend_x0, trend_x1, xpl, xpu))
+    x_max = max(c(data, trend_x0, trend_x1, xpl, xpu))
+
+    ### Plot it all
+
+    # Data set. Points plotted twice due to keep them from getting clobbered by
+    # white rectangle.
+    par(bg = "white")
+    plot(
+        x_data_points, y_data_points,
+        xlim = c(x_min, x_max), ylim = c(y_min, y_max),
+        axes = FALSE,
+        ylab = "Percent", xlab = x_label,
+        pch = 16, col = "red",
+        main = paste("Probability Plot of", x_label,"\nNormal - 95% CI")
+    )
+    rect(par("usr")[1], par("usr")[3], par("usr")[2], par("usr")[4], col = "white")
+    points(x_data_points, y_data_points, pch = 16, col = "red")
+
+    # Trend line
+
+    segments(trend_x0, y_min, trend_x1, y_max, col = "blue")
+
+    # Lower and upper bounds
+
+    lines(xpl, y_axis_points, col = "blue")
+    lines(xpu, y_axis_points, col = "blue")
+
+    # Y-axis gridlines
+
+    for (i in 1:length(y_axis_points)) {
+        abline(h = y_axis_points[i], col = "gray", lty = 2)
+    }
+
+    # Axes
+
+    axis(1)
+    axis(2, at = y_axis_points, labels = y_axis_labels)
+
+    # Box and x-grid
+
+    box()
+    grid(ny = NA, lty = 2)
+
+    # Legend
+
+    legend(
+        "topright",
+        c(
+            paste("Mean:", signif(my_mean,3), sep = " "),
+            paste("StDev:", signif(my_sd,3), sep = " "),
+            paste("N:", length(data), sep = " "),
+            paste("Shapiro:", signif(shapiro.test(data)$statistic,3), sep = " "),
+            paste("p-Value:", signif(shapiro.test(data)$p.value,3), sep = " ")
+            
+        ),
+        bg = rgb(0,0,0,0.05)
+    )
+}
+```
+
+***
+<!-- remember to break down subtasks into subheadings -->
+
+## Task 1: Bleach Experiment in Pulp Mill
+
+Data was imported and checked.
+
+```{r bleach data import}
+bleach_experiment <- read.csv("goldenbrown.csv")
+bleach_experiment
+```
+
+### 1a. Peroxide treatment and mean brightness of paper
+
+#### t-test for mean difference in brightness 
+
+Using 2 sample t-test, assuming equal variances.
+
+```{r t-test peroxide and brightness}
+t.test(bleach_experiment$bright[bleach_experiment$peroxide == "no H2O2"], bleach_experiment$bright[bleach_experiment$peroxide == "H2O2"], paired = F, var.equal = T)
+```
+
+#### Conclusion from test, explanation and interpretation
+
+The above results suggest that there is a significant difference in the means of paper brightness between samples that were bleached and samples that were not breached, as p < 0.05. The low p-value indicates that, in the long run, the probability of the results we observed occuring, given the null hypothesis is true, is only 0.8%. Hence we can be reasonably confident the null hypothesis that hydorgen peroxide has no effect on brightness is indeed false.
+
+The confidence interval generated has a 95% chance of containing the true fixed population value somewhere within it's bounds of -2.7 and -0.5. Because the confidence interval does not contain zero, we can be at least 95% confident that, the data generated did not come from the null hypothesis of no difference.
+
+### 1b. Peroxide treatment and reversion of paper
+
+#### t-test for mean difference in reversion
+
+```{r t-test peroxide and reversion}
+t.test(bleach_experiment$reversion[bleach_experiment$peroxide == "no H2O2"], bleach_experiment$reversion[bleach_experiment$peroxide == "H2O2"], paired = F, var.equal = T)
+```
+
+Using 2 sample t-test, assuming equal variances.
+
+#### Conclusion from test, explanation and interpretation
+
+The above results suggest that there is not a significant difference in the means of paper reversion between samples that were bleached and samples that were not breached, as p > 0.05. The high p-value indicates that, in the long run, the probability of the results we observed occuring, given the null hypothesis is true, is 22.14%. Hence we can not reject the null hypothesis that hydorgen peroxide has no effect on reversion.
+
+The confidence interval generated has a 95% chance of containing the true fixed population value for a difference in means somehwere within it's bounds of -0.31 and 0.07. Because the confidence interval does indeed contain zero, we can not be at least 95% confident that the data generated did not come from the null hypothesis of no difference.
+
+### 1c. Normality check of brightness data
+
+#### Probability plots for treatment groups
+
+```{r prob plots for brightness by treatment group, results = 'hold'}
+par(mfrow = c(1,2))
+minitab_normal_prob_plot(bleach_experiment$bright[bleach_experiment$peroxide == "no H2O2"],"Brightness, non-bleached group")
+minitab_normal_prob_plot(bleach_experiment$bright[bleach_experiment$peroxide == "H2O2"],"Brightness, bleached group")
+```
+
+#### Comment on results
+
+The data for both the treatment groups falls within the 95% confidence interval bands for normality. This implies that we can not reject the null hypothesis that the data is not normal, due to a lack of evidence for non-normality. This is reflected in the p-values of 0.456 and 0.247, which suggest there is a reasonably high probability of observing what we did given that the population distributions are in fact normal.
+
+However, the points do not closely follow the line of perfect normality in the center of each plot, meaning there is not strong evidence of strong normality. 
+
+### 1d. Explanation of data collection process
+
+>"Note that the outcome of the bleaching operation may be influenced by these variables". 
+
+These variables are conductivity and kappa. This suggests that the assignment of treatment groups is not controlled strictly by a randomised process, but may in fact be partially determined by the kappa and conductivity measurements immediately prior to bleaching.
+
+Additionally, as conductivity and kappa measurements were made immediately prior to bleaching and as these variables may be predictors for brightness, this additionally information may have biased the assignment of treatment units (especially as the experimenters are looking to confirm their hypothesis, not disprove the null hypothesis). Ideally, assignment of treatment units would be made while "blind" to any information about the units themselves (as per many medical trials).
+
+If this is the case, we can be suspicious of the ideal situation being met (we have collected a non-random sample).
+
+### 1.e. Multiplot of kappa and brightness
+
+```{r multiplot}
+day_names <- c(`1` = "Day 1"
+               ,`2` = "Day 2"
+               ,`3` = "Day 3")
+ggplot(data = bleach_experiment,aes(x = run, y = bright)) + 
+    geom_line() +
+    geom_point(aes(color = peroxide), size = 3) +
+    facet_wrap(~day, scales = "free_x", labeller = as_labeller(day_names)) +
+    xlab("Run Number") +
+    ylab("Brightness") +
+    labs(title = "Plot of Brightness by Day, with Treatment Groups") +
+    theme_minimal() -> g_bright_day
+ggplot(data = bleach_experiment,aes(x = run, y = kappa)) + 
+    geom_line() +
+    geom_point(aes(color = peroxide), size = 3) +
+    facet_wrap(~day, scales = "free_x", labeller = as_labeller(day_names)) +
+    xlab("Run Number") +
+    ylab("Kappa") +
+    labs(title = "Plot of Kappa by Day, with Treatment Groups", caption = "units not provided with data") +
+    theme_minimal() -> g_kappa_day
+grid.arrange(g_bright_day,g_kappa_day)
+```
+
+### 1f. Validity of t-test in part a and design improvement
+
+On visual inspection of the entire figure in 1e we observe a strong general relationship that high kappa is negatively correlated with brightness. This relationship appears to be independant of (not mediated by) the peroxide treatment. This can be seen from the vertical symmetry in the curves between brightness and kappa.
+
+Moreover, the magnitude of this kappa effect appears to be greater than the magnitude of the effect produced by treating the pulp with peroxide. 
+
+It is also observed that peroxide appears to have been added to the pulp at lower kappa values on day 2 and day 3. This appears to increase the observed brightness values. 
+
+Therefore, the validity of the t-test in part 1a may have been comprimised. This is because the low p-value produced may have come from the unaccounted for (in the  t-test) factor of non-random association of kappa and peroxide treatment, which have not been randomly assigned - there is some collinearity occuring. This interaction creates a pattern in the data going into the t-test, leading to the low p-value observed.
+
+The peroxide may still have a significant effect on brightness, but it is difficult to tell with the interferance of kappa on brightness (i.e. without controlling for it, such as using an ANCOVA).
+
+The bleach treatment design could be improved by using more sophisticated methods to statistically control for factors in the analysis (i.e. moving beyond t-tests) or by ensuring assignment of peroxide treatment was fully randomised with regards to kappa. 
+
+Alternatively, the design of the bleach treatment  could have been improved by ensuring kappa remained relatively constant in the selection of treatment units (there is considerable variance above the stated ideal kappa value of 40 for paper making)
+
+### 1g. Brightness and kappa analysis
+
+#### Brightness against kappa scatterplot with regression
+
+```{r scatterplot-groups-bright-kappa}
+ggplot(data = bleach_experiment,aes(x = kappa, y = bright, color = peroxide)) + 
+    geom_smooth(method = lm) +
+    geom_point(size = 3) +
+    xlab("Kappa") +
+    ylab("Brightness") +
+    labs(title = "Plot of Brightness against Kappa, with Treatment Groups", caption = "fit with linear regression") +
+    theme_minimal()
+```
+
+#### Observations of where groups lie
+
+We observe the bleached group shows clear seperation from the non-bleached group in terms of brightness, where the bleached values generally have higher brightness values that non-bleached values, given similar kappa (lignin content). Unfortunately we do not observe many bleached observations with high kappa values, partially limiting our ability to describe this seperation across the range of kappa observed for the data as a whole.
+
+#### Suggested relationship of peroxide on brightness
+
+These observations suggest that the addition of peroxide (bleaching) does indeed increase brightness values, after taking account of kappa values (for which there is a clear negative correlation with brightness in both bleached and non-bleached treatment groups).
+
+### 1.optional.a ANCOVA of bright against kappa
+
+Following the steps outlined here: https://www.tutorialspoint.com/r/r_analysis_of_covariance.htm
+
+As the p-value for the anova of the two models is greater than p-value we fail to reject the null hypthosis, suggesting there may be no difference in the models. This suggests there is no significant interaction of kappa and peroxide assignment (contrary to what I stated earlier).
+
+As the p-values for both predictors in the ANCOVA where each predictor is considered independant are less than 0.05, we can safely reject the null-hypthosis in both instances (this confirms the visual inspection of the figure in 1g).
+
+```{r ANCOVA, results = 'hold'}
+#use aov, wrapper for lm
+bright_kappa_peroxide_noint <- aov(bright ~ kappa + peroxide, data = bleach_experiment)
+bright_kappa_peroxide_int <- aov(bright ~ kappa * peroxide,data = bleach_experiment)
+
+summary(bright_kappa_peroxide_int)
+summary(bright_kappa_peroxide_noint)
+
+print(anova(bright_kappa_peroxide_noint,bright_kappa_peroxide_int))
+```
+
+***
+
+## Task 2: Wire Strength with Pin Pull
+
+Data was imported and checked.
+
+```{r pin pull test data import}
+pin_pull <- read.csv("pinpull.csv")
+pin_pull
+```
+
+### 2.a. Display of strength data
+
+#### Strength boxplots
+
+```{r strength boxplots with connecting mean line}
+#pin_pull <- as.factor(pin_pull$wiretype)
+pin_pull$insulation <- factor(pin_pull$insulation, levels(pin_pull$insulation)[c(2,1)]) #reorder from s->c
+#boxplot ref: https://stackoverflow.com/questions/3989987/joining-means-on-a-boxplot-with-a-line-ggplot2
+wiretypes <- c(`1` = "Wire Type 1",`2` = "Wire Type 2")
+ggplot(data = pin_pull, aes(x = insulation, y = tensile.strength, color = insulation)) +
+  geom_boxplot() +
+#    geom_point(aes(color = insulation), size = 1, alpha= 0.2)  +
+    stat_summary(fun.y=mean, geom="line", aes(group=1), color = "black")  + 
+    stat_summary(fun.y=mean, geom="point", color = "black") +
+    xlab("Insulation Type") +
+    labs(title = "Boxplots of Tensile Strength by Insulation Type", caption = "Boxplots with quantiles and connecting mean line") +
+    ylab("Tensile Strength (Newtons)") +
+    theme(legend.position = "none") +
+    facet_wrap(~wiretype, labeller = as_labeller(wiretypes)) +
+    theme_minimal()
+```
+
+#### Statement of insulation type and stength
+
+Insulation type appears to have a significant effect for wire type 1, where the addition of C type insulation increases tensile stength. 
+
+For wire type 2, insulation type appears to have no effect.
+
+### 2.b. Effects of wiretype and insulation (ANOVA)
+
+#### 1-way ANOVA results
+
+<!-- Ref: https://www.statmethods.net/stats/anova.html -->
+
+```{r ANOVA Type I, results = "hold"}
+pin_pull$wireinsul <- factor(pin_pull$wireinsul, levels(pin_pull$wireinsul)[c(2,1,4,3)]) #reordering as per instructions
+
+wireinsul.aov <- aov(tensile.strength ~  wireinsul, data = pin_pull) #Type I
+#drop1(wireinsul.aov,~.,test="F") #Type III
+summary(wireinsul.aov)
+```
+
+We can see the difference between these is minimal in this instance.
+
+#### Explanation of ANOVA results
+
+The calculated F statistic is 48.72, an extreme outlier on the F-distribution. This suggests the probability of getting such a set of data, given the null-hypothesis is true, is exceptionally small. This is indicated by the p value that is approx. 0. 
+
+Hence we reject the null hypothesis that wiretype and insulation do not effect tensile strength (population means are equal) and posit the alternative hypothesis (that wiretype and insulation has a significant effect on tensile strength, i.e. the populations means are not equal) as viable.
+
+#### Comment on practical implications, significance
+
+This ANOVA provides absolutely no information about how changing wiretype and insulation will effect tensile strength - it only confirms that an effect of some description is significant and present when wireinsul (e.g. both variables concatenated) is changed. 
+
+More specifically, it states that the means of tensile strength as a response are not all equal across wireinsul as a predicator (there is a statistically significant difference).
+
+To investigate whether insulation and/or wiretype interactively or independently effect tensile strength, we would need to run a more complex analysis (e.g. two way ANOVA, ANCOVA etc).
+
+### 2.c. Confidence intervals for tensile strengths (with Bonferroni)
+
+#### Calculated Confidence Intervals with Bonferroni applied
+
+Taking the fourth power of the confidence level as per the lecture instructions (accounting for all possible pairwise comparisons). I've complied with the assignment instructions and emulated minitabs method as explained here: http://support.minitab.com/en-us/minitab-express/1/help-and-how-to/modeling-statistics/anova/supporting-topics/multiple-comparisons/what-is-the-bonferroni-method/
+
+>"Minitab constructs each interval with a confidence level of (1 - α/g), where g is the number of intervals"
+
+A similar approach is also explained here: 
+https://www.ma.utexas.edu/users/mks/384E/multcomp.pdf
+
+Hence displayed are a series of one sample t-test confidence intervals, using an alpha of 0.05/4 = 0.0125 i.e. a 98.75% level of confidence. The assignment instructions do not actually specify the source of the confidence intervals, only that the bonferroni correction is applied (and that variances are assumed to be equal). The mean_cl_normal function uses smean.cl.normal() in Hmisc, which uses the t-dist.
+
+```{r confidence intervals 1way ANOVA, results = 'hold'}
+#loop for t-test confidence intervals
+cat("Confidence Intervals for wireinsul with 98.75% level of confidence: \n")
+for (i in 1:length(levels(pin_pull$wireinsul))) 
+{
+cat(levels(pin_pull$wireinsul)[i])
+cat("\n")
+cat("\n")
+cat("CI: ")
+cat(t.test(pin_pull$tensile.strength[pin_pull$wireinsul == levels(pin_pull$wireinsul)[i]], conf.level = 0.9875, var.equal = T)$conf.int)
+cat("\n")
+cat("Mean: ")
+cat(mean(pin_pull$tensile.strength[pin_pull$wireinsul == levels(pin_pull$wireinsul)[i]]))
+cat("\n")
+cat("\n")
+}
+```
+
+#### Display of Confidence Intervals
+
+```{r display of conf intervals with data}
+#Using gplots rather than a long winded trail in ggplot2
+#plotmeans(data = pin_pull, tensile.strength ~ wireinsul, p = 0.9875) l
+ggplot(data = pin_pull, aes(y = tensile.strength, x = wireinsul)) +
+    stat_summary(geom = "point", fun.y = mean) +
+    stat_summary(geom = "line", fun.y = mean, aes(group = 1), color = "black") +
+    stat_summary(geom = "errorbar", fun.data = mean_cl_normal, fun.args = list(conf.int = .9875), width = 0.2, color = "black") +
+    stat_summary(aes(label=round(..ymax..,2)),fun.data = mean_cl_normal, geom="text", size=3, vjust = -3, hjust = -0.5, fun.args = list(conf.int = .9875)) +
+    stat_summary(aes(label=round(..y..,2)),fun.data = mean_cl_normal, geom="text", size=3, vjust = 0, hjust = -0.5, fun.args = list(conf.int = .9875)) +
+    stat_summary(aes(label=round(..ymin..,2)),fun.data = mean_cl_normal, geom="text", size=3, vjust = 3, hjust = -0.5, fun.args = list(conf.int = .9875)) +
+    xlab("Wire and Insulation") +
+    ylab("Tensile Strength (Newtons)") +
+    labs(title = "Means and 95% Bonferroni CIs for Tensile Strength (N) by Wire Insulation") +
+    theme_minimal()
+```
+
+#### Conclusion
+
+Bonferroni intervals have the desriable quality that they are wider than regular confidence intervals, which reflects the decreased level of confidence we have in detecting significant pairwise differences. This decreased level of confidence comes from the increasing chance of making a Type I error as the number of comparisons increase i.e. that we dredge up a difference that is due to chance alone.
+
+Using simplistic comparisons of confidence intervals using the Bonferroni correction to alpha, changing insulation from S to C in wire type 1 appears to increase wire strength considerably. Change insulation from S to C in wire type 2 appears to have neglible effect. Pairwise tests of means would allow for comment on signficance.
+
+### 2.d. Pairwise comparisons 
+
+#### ANOVA with Tukey's 1-way multiple comparisons
+
+```{r tukeys}
+TukeyHSD(wireinsul.aov, conf.level = 0.95)
+```
+
+#### Interpretation
+
+### 2.e. Residuals Analysis
+
+Note that R's default 4-in-1 plots for residuals analysis use different plots, hence I have added the histogram of residuals and commented on the QQ plot instead (as explained in a previous assignment, there are only subtle differences between QQ plots and probability plots).
+
+#### 4-in-1 Plot (R) + Histogram
+
+```{r 4-in-1 pinpull, warning = FALSE}
+#ref: https://stackoverflow.com/questions/29182228/plotting-normal-curve-over-histogram-using-ggplot2-code-produces-straight-line
+
+par(mfrow = c(2,2))
+plot(wireinsul.aov)
+
+aov_wireinsul_residuals <- as.data.frame(residuals(wireinsul.aov))
+ggplot(data = aov_wireinsul_residuals, aes(x = `residuals(wireinsul.aov)`)) +
+  geom_histogram(aes(y =..density..,fill=..count..)) +
+  theme_minimal() +
+  labs(title = "Residuals Histogram for 1-way ANOVA", caption = "Bins = 30, ideal normal curve overlay") + 
+  stat_function(fun=dnorm, 
+                color="red", 
+                args=list(mean=mean(aov_wireinsul_residuals$`residuals(wireinsul.aov)`),
+                sd=sd(aov_wireinsul_residuals$`residuals(wireinsul.aov)`))) +
+  xlab("Residuals") +
+  ylab("Count") 
+
+m <- mean(aov_wireinsul_residuals$`residuals(wireinsul.aov)`)
+s <-sd(aov_wireinsul_residuals$`residuals(wireinsul.aov)`)
+n <- nrow(aov_wireinsul_residuals)
+p <- (1: n) / n - 0.5 / n
+ggplot(aov_wireinsul_residuals) +
+  theme_minimal() +
+    geom_point(aes(x = p, y = sort(pnorm(`residuals(wireinsul.aov)`, m, s)))) +
+  geom_abline(intercept = 0, slope = 1, color = "red") +
+  labs(title = "Probability Plot of 1-way ANOVA Residuals for WireInsul") +
+  ylab("ECDF - Actual Proportion") +
+  xlab("TCDF - Theoretical Proportion")
+```
+
+#### Comment on Histogram and Probability Plot
+
+The histogram shows a general pattern of normality in the residuals, although the tails are a bit sparse. The probability plot shows that most of the data follows the line of perfect normality (1:1 ECDF:TCDF) fairly well. The QQ plot also shows that most of the data follows the line of perfect normality, with some deviation in the tails (QQ plots tend to exaggerate this however). We would expect this pattern, given the histogram also shows a non-normal pattern in the tails. Hence, given the information from these three types of visual analysis, we can be reasonably confident that the residuals are normally distributed and that the ANOVA assumption on normality of the residuals has been met.
+
+### 2.optional.a. Display of interaction plot (wiretype, insulation)
+
+```{r interaction plot}
+par(mfrow = c(1,2), mar = c(4,4,4,4))
+interaction.plot(x.factor = pin_pull$insulation, trace.factor = pin_pull$wiretype,response = pin_pull$tensile.strength, main = "Interaction of Wire Type and Insulation on Tensile Strength", xlab = "Insulation Type", ylab = "Tensile Strength (Newtons)",trace.label = "Wire Type")
+interaction.plot(pin_pull$wiretype,pin_pull$insulation,pin_pull$tensile.strength, main = "Interaction of Wire Type and Insulation", xlab = "Wire Type", ylab = "Tensile Strength (Newtons)",trace.label = "Insulation Type")
+```
+
+As we are primarily considering the effect on changing insulation on each wire, setting wiretype as the trace seems appropriate (the left plot). This plot confirms what was suggested from the earlier analysis, that switching to type C insulation has minimal effect on tensile strength in wiretype 2 and a large positive effect on tensile strength in wiretype 1.
+
+However, if we set insulation as the trace (right plot), this suggests instead that the second wire type is generally stronger and that wiretype strongly influences the S insulation effects on tensile strength of the wire (while still having minimal impact on the C insulation effect). 
+
+However, this is comparing between-subjects in a within-subjects design i.e. it is more appropriate to look at the effect of the change in wiretype on each wire. 
+
+For example (although this is obviously not a direct paradigm), we could consider if this was a human population divided into gender, not wire type (M/F), with smoker/non-smoker instead of insulation type and lifespan instead of tensile strength. It would then be less relevant to look at the influence of gender on smokings effect on mortality (though that interaction is interesting), than it would the effect of smoking or not smoking for each gender (as this is the treatment, like insulation type).
+
+### 2.optional.b. 2-way ANOVA (wiretype, insulation) for tensile strength
+
+```{r two way annova}
+wireinsul.interaction.aov <- aov(data = pin_pull,tensile.strength ~ wiretype * insulation)
+summary(wireinsul.interaction.aov)
+```
+
+***
+
+## Task 3: Paper Strength
+
+Data was imported and checked.
+
+```{r paper strength data import}
+paperstrength <- read.csv("paperstrength.csv")
+paperstrength
+```
+
+### 3.a. Analysis of hardwood percentage and tensile strength
+
+#### Fitted Line Plot
+
+```{r fitted line plot }
+#Ref: https://rpubs.com/Bio-Geek/71339
+lm_hardwood <- lm(data = paperstrength, strength.psi ~ hardwood..)
+pred_hardwood <- predict(lm_hardwood, interval="prediction",level = 0.95)
+paperstrength_pred <- cbind(pred_hardwood,paperstrength)
+ggplot(paperstrength_pred, aes(y = strength.psi, x = hardwood..))+
+    geom_point() +
+    geom_line(aes(y=lwr), color = "red", linetype = "dashed")+
+    geom_line(aes(y=upr), color = "red", linetype = "dashed")+
+    geom_smooth(method=lm, se=TRUE, level = 0.95) +
+    xlab("Hardwood (%)") +
+    ylab("Strength (psi)") +
+    labs(title = "Plot of Paper Strength against Hardwood Proportion", caption = "with 95% confidence band for means (grey) and 95% data prediction bands (red)") +
+  theme_minimal()
+```
+
+#### 4-in-1 Residual Output
+
+Using same graphs and rationale as before;
+
+```{r 4-in-1, warning = FALSE}
+#ref: https://stackoverflow.com/questions/29182228/plotting-normal-curve-over-histogram-using-ggplot2-code-produces-straight-line
+
+par(mfrow = c(2,2),mar = c(2,2,2,2))
+plot(lm_hardwood)
+
+lm_hardwood_residuals <- as.data.frame(lm_hardwood$residuals)
+colnames(lm_hardwood_residuals) <- c("residuals")
+ggplot(data = lm_hardwood_residuals, aes(x = residuals)) +
+  geom_histogram(aes(y =..density..,fill=..count..), binwidth = 1) +
+  theme_minimal() +
+  labs(title = "Residuals Histogram for Linear Hardwood Model", caption = "binwidth = 1, ideal normal curve overlay") + 
+  stat_function(fun=dnorm, 
+                color="red", 
+                args=list(mean=mean(lm_hardwood$residuals),
+                sd=sd(lm_hardwood$residuals))) +
+  xlab("Residuals") +
+  ylab("Count") 
+
+m <- mean(lm_hardwood_residuals$residuals)
+s <-sd(lm_hardwood_residuals$residuals)
+n <- nrow(lm_hardwood_residuals)
+p <- (1: n) / n - 0.5 / n
+ggplot(lm_hardwood_residuals) +
+  theme_minimal() +
+    geom_point(aes(x = p, y = sort(pnorm(residuals, m, s)))) +
+  geom_abline(intercept = 0, slope = 1, color = "red") +
+  labs(title = "Probability Plot of Linear Hardwood Model Residuals") +
+  ylab("ECDF - Actual Proportion") +
+  xlab("TCDF - Theoretical Proportion")
+```
+
+#### State meaning of coefficients 
+
+```{r linear model hardwood}
+cat("Linear Model Coefficients: \n")
+lm_hardwood$coefficients
+```
+
+The coefficients of the fitted linear model suggest that for every extra percentage of hardwood that goes into the paper pulp in a production, there will be an associated 0.7 increase in the final tensile strength of the paper (measured in psi). The model also suggests that when there is no hardwood in the paper pulp for a production run, the final tensile strength will be 7.25 psi.
+
+#### Interpretation of residual output
+
+The residual plots reveal a couple of problems. In the probability plot, there more of the data bunched into the first part of the theoretical proportion for a normal distribution of the sample data and less in the higher theortical proporiton for a normal distribution of the sample data. This is indicated by the systematic variation of points below the normality line until the highest values (below which are the highest proportions) of the data.
+
+The QQ plot shows a reasonably good fit, but on the right hand tail there is significant systematic deviation. This is not mirrored by the other half of the data (we would expect some variation in the tails with a distribution closer to a t-distribution).
+
+Most tellingly, a histogram of the data shows considerable asymmetry against a perfect normal distribution. There are more negative residuals than positive residuals, so the model is producing residuals showing heteroskedasticity. However, the general sparsity of the data that limits the utility of the histogram (note the low number of bins).
+
+These plots suggest we should try a different model, as the assumptions of normally distributed residuals for the linear regression is probably violated, invalidating the model.
+
+### 3.b. Comparison of deviations with explanations
+
+```{r residual}
+summary(lm_hardwood)
+```
+
+The residual standard error is 2.6 in model, higher than the pooled standard deviation for the ANOVA from the slides of 2.55. This is because the standard error in the ANOVA is calculated from each level of hardwood proportion, then pooled. Hence, it is a weighted average of the error about the seperate strata in hardwood, as opposed to the error about the entire sample. We can  easily replicate this effect in R by using as.factor (see code below);
+
+```{r AOVs pooled non, results = 'hold'}
+cat("Original \n")
+aov(data = paperstrength, strength.psi ~ hardwood..)
+cat("Pooled \n")
+aov(data = paperstrength, strength.psi ~ as.factor(hardwood..))
+```
+
+### 3.c. Explanation of prediction bands
+
+For a normal distribution, 95% confidence (i.e. of the distribution) is reflected by 2 SD away from the mean on either side. Hence, since S is a measure of the standard deviation of the residuals of model, it reflects the unexplained (random) variation we would expect. As the prediciton bands are for (and are calculated using) a linear model based on the normal distribution, it follows that bands at 95% confidence would be about 2S from the regression line (the expected mean at each hardwood percentage, i.e the center of the normal distribution 'mapped' vertically onto the regression in infinitesimally many slices).
+
+I could not find the equation for the prediction interval (or bands) in the course book, but there is an excellent explanation here and here explaining the formula (and Rs terminology):
+
+>https://onlinecourses.science.psu.edu/stat501/node/274
+>https://campus.datacamp.com/courses/correlation-and-regression/model-fit?ex=3#skiponboarding
+
+The addition of the incorporation of MSE into the prediction interval compared with the confidence interval guarantees a minimum level of variance, which comes out as wider bands. As the value we generate is the root-MSE, this means the prediction bands should actually usually be slightly wider than 2 x S for 95% confidence (dependant on the sample size). The second term inside the radical explains the curvature of the bands (it's minimised at the midpoint of the domain).
+
+### 3.d. Regression analysis with prediction
+
+We can skip redoing the regression here as it is already stored in the enviromnment. Note that a confidence interval (not prediction interval) is specified.
+
+```{r prediction for 10% hardwood}
+cat("Tensile Strength 95% Confidence Interval using Linear Model for 10% Hardwood level: \n")
+predict(lm_hardwood,newdata = data.frame(hardwood.. = 10), interval="confidence",level = 0.95)
+cat("\n")
+cat("Tensile Strength 95% Prediction Interval using Linear Model for 10% Hardwood level: \n")
+predict(lm_hardwood,newdata = data.frame(hardwood.. = 10), interval="prediction",level = 0.95)
+```
+
+The estimated mean of tensile strength at the 10% hardwood level is 14.2 psi. We can expect (with a 95% degree of confidence) this mean to be between 13.01 and 15.4. This degree of confidence means, given repeated samples with repeated intervals, we expect 95% of them will contain the true population mean for tensile strength at the 10% hardwood level.  
+
+### 3.e. Comment on utility of confidence intervals
+
+Although the confidence interval in the slides is wider (likely from the reduced sample size and/or possible Bonferroni treatment neccesary to compare means of multiple treatments), it may likely reflect a more accurate (although less precise) estimate for the mean. 
+
+This strongly depends on whether it is appropriate to treat each factor as an independant treatment, or along a continuous quantitative scale (where a regression model that scales with percentage would be more appropriate).
+
+Assuming the assumptions for the ANOVA and the regression are both satisfied, then the regression model comparison appears to be more useful, as it is narrower. Furthermore, the regression model allows the creation of confidence and prediction intervals for any percentage of hardwood added, which is not possible if a strictly factorial approach is taken.
+
+### 3.optional.a. Lack of Fit interpretation
+
+The standard output in R does not come with a lack of fit test. However, the handy "alr3"" test does.
+
+```{r lack of fit}
+aov_hardwood <- aov(data = paperstrength, strength.psi ~ hardwood..)
+pureErrorAnova(aov_hardwood)
+```
+
+From the mini tab help files, the way to interpret this test is that we can say the model sufficiently fits the data, as p > 0.05. It is only appropriate to perform a lack of fit test when there are repeated measurements of the response at multiple values of the predictor. 
+
+A more mathematical explanation explains the test is conducted by dividing the sum of squares due to error from lack of fit by the sum of squares due to error from the model. A high value will be an outlier on the F-test, producing a significant result. 
+
+>https://stats.stackexchange.com/questions/99989/lack-of-fit-and-pure-error

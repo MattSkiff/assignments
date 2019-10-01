@@ -1,0 +1,391 @@
+---
+title: 'STAT521: Assignment 3'
+author: "Matthew Skiffington"
+subtitle: "Questions by Steven Miller adapted from Faraway (2016)"
+date: "19 May 2019"
+output: 
+  html_document: 
+  theme: yeti
+  highlight: espresso
+---
+
+```{r setup, include=FALSE}
+library(faraway)
+library(lme4)
+library(pbkrtest)
+library(plotly)
+library(ggplot2)
+library(ggthemes)
+library(RColorBrewer)
+library(RLRsim)
+op <- options(contrasts=c("contr.sum", "contr.poly"))
+options(op)
+knitr::opts_chunk$set(echo = TRUE, warning = F, message = F) 
+set.seed(1)
+```
+
+Preface: these questions were adapted from Faraway (2016). Many of the answers use code derived from this textbook, or from other sources.
+
+# Question 1: Lawn Mower Data
+
+---
+
+## Chapter 10 (2016): Random Effects
+
+---
+
+### Make plots of the data, and comment
+
+We can clearly see a positive in cutoff times (which I will now refer to only as "times") when the lawnmowers are set to high compared to when they are set to low. The machines have a lot of overlap in terms of times, although m5 could plausibly have lower times than the rest. There appears to be slightly higher times for manufacturer A than manufacturer B.
+
+The interaction boxplots reveal some difficulties. These simply display the times for combinations of the factors. We note that although manufacturer A appears to have higher times, this could plausibly be due to the individual effects of machines 1,2 and 3. We are unable to seperate out these effects, as machines 1,2 and 3 are nested within the "A" manufacturer factor level. However while machine is nested within manufacturer, speed is not. We can determine that, for a given speed level, manufacturer B will have lower times than manufacturer A. 
+
+```{r q1 a}
+data(lawn)
+
+boxplot(lawn$time, main = "Time", ylab = "Time (s)")
+
+boxplot(
+data = lawn,
+time ~ machine,
+main = "Time by Machine",
+ylab = "Time (s)",
+xlab = "Machine code",
+col = c("blue", "red")
+)
+
+boxplot(
+data = lawn,
+time ~ speed,
+main = "Time by Speed",
+ylab = "Time (s)",
+xlab = "Speed",
+col = c("green", "yellow")
+)
+
+boxplot(
+data = lawn,
+time ~ manufact,
+main = "Time by Manufacturer",
+ylab = "Time (s)",
+xlab = "Manufacturer",
+col = c("purple", "orange")
+)
+
+boxplot(
+data = lawn,
+time ~ manufact,
+main = "Time by Manufacturer",
+ylab = "Time (s)",
+xlab = "Manufacturer",
+col = c("purple", "orange")
+)
+
+boxplot(
+time ~ machine * manufact,
+data = lawn,
+main = "Time by Machine and Manufacturer",
+xlab = "Machine / Manufacturer combination",
+ylab = "Time (s)",
+col = c("grey50", "grey85")
+)
+
+boxplot(
+time ~ speed * manufact,
+data = lawn,
+main = "Time by Speed and Manufacturer",
+xlab = "Speed / Manufacturer combination",
+ylab = "Time (s)",
+col = c("mistyrose", "mistyrose4")
+)
+
+boxplot(
+time ~ speed * machine,
+data = lawn,
+main = "Time by Speed and Machine",
+xlab = "Speed / Machine combination",
+ylab = "Time (s)",
+col = c("mediumturquoise", "mediumvioletred")
+) 
+```
+
+#### Fit a fixed-effects model for the cut-off time response using just the main effects of the three predictors  (i.e. no interactions). Explain why not all of the effects can be estimated.
+
+Not all of the effects can be estimated because there are fewer degrees of freedom for the machine term in the final model than there levels of that term (i.e. 6 levels, 4 degrees of freedom). Excluding machine 1, which is taken as the base contrast, a degree of freedom is 'used' for each estimate of each level of the term, i.e. the four levels m2-m5. 
+
+```{r q1 b}
+lawn_model <- aov(data = lawn,time ~ factor(speed) + factor(manufact) + factor(machine))
+
+summary(lawn_model)
+
+lawn_model$coefficients
+```
+
+#### Fit a mixed-effects model with manufacturer and  speed as main effects along with their interaction, and machine as a random effect. If the same machine was tested at the same speed, what would be the SD of the times observed? If different machines were sampled from the same manufacturer and tested at the same speed once only, what would be the SD of the times observed?
+
+The mixed effect model indicates the standard deviation of a single machine tested at the same speed would be expected to be 5.19. If different machines were sampled, from the same manufacturer and at the same speed, the standard deviation would be expected to be 12.05.
+
+```{r q1 c}
+mixed_model <- lmer(data = lawn, time ~ 1+(1|machine) + speed + manufact + speed*manufact)
+as.data.frame(ranef(mixed_model))
+sumary(mixed_model) # Faraway's concise summary function
+```
+
+#### Test whether the interaction term of the model can be removed. If so, go on to test the two main fixed effects terms. 
+
+The design of the experiment is balanced and we have a small number of observations. Hence we can probably trust the results of the KRmodcomp to be similar to the anova. The interaction term can be removed, as shown by the non significant results from the anova and KRmodcomp. Removing manufact is borderline (p ~ 0.05). However, we might choose to go with the more reliable KRmodcomp test, in which case we can remove manufact with some confidence (p > 0.05). Speed should defnitely not be removed, as this results in a highly significant difference between the models (which follows from the clear difference in times shown by the EDA).
+
+```{r q1 d}
+amod <- lmer(data = lawn, time ~ 1+(1|machine) + speed + manufact + speed*manufact,REML = F) # must use ML method, not REML
+nmod <- lmer(data = lawn, time ~ 1+(1|machine) + speed + manufact,REML = F)
+
+anova(amod,nmod)
+KRmodcomp(amod, nmod) # F test
+# https://newonlinecourses.science.psu.edu/stat502/node/225/ - balanced designs
+# removing manufact
+amod <- lmer(data = lawn, time ~ 1+(1|machine) + speed + manufact,REML = F) # must use ML method, not REML
+nmod <- lmer(data = lawn, time ~ 1+(1|machine) + speed,REML = F)
+anova(amod,nmod)
+KRmodcomp(amod, nmod) # F test
+
+# removing speed
+amod <- lmer(data = lawn, time ~ 1+(1|machine) + speed + manufact,REML = F) # must use ML method, not REML
+nmod <- lmer(data = lawn, time ~ 1+(1|machine) + manufact,REML = F)
+anova(amod,nmod)
+KRmodcomp(amod, nmod) # F test
+```
+
+#### Check whether the variation between the machines is significant. 
+
+~~The variation between machines is apparently not significant, on the basis of the p-value obtained from the comparison of the loglikehoods of the small (with only the machine effect) and null models. However, we note that lme4 throws an optimisation error and that the estimate of the variance is 0.00 - hence we have encountered problems in the model fitting process.~~
+
+~~Given that there is a ~65% chance that the likelihoods of the small and null model are 0, it is unlikely that the LRT follows a chi-sq distribution. This suggests LRT has a poor (or no) approximation to a chi-sq distribution in the case of our models, which means we should not trust a p-value calculated in this manner (from the chi-sq distribution). We can also see this visually from the histogram of the bootstrapped LRTs.~~
+
+~~As can be seen, it turns out the likelihood ratio statistic is virtually 0.~~
+
+The exact restricted likelihood ratio test gives a p-value of 0.0033, indicating the variation between machines is significant. 
+
+```{r q1 e}
+#smod <- lmer(time ~ 1+(1|machine), lawn, REML=FALSE)
+#nullmod <- lm(time ~ 1, lawn)
+#lrtstat <- as.numeric(2*(logLik(smod)-logLik(nullmod)))
+#pvalue <- pchisq(lrtstat,1,lower = FALSE)
+#data.frame(lrtstat, pvalue)
+#options(warn=-1)
+#y <- simulate(nullmod)
+#lrstat <- numeric(1000)
+#for(i in 1:1000){
+#y <- unlist(simulate(nullmod))
+#bnull <- lm(y ~ 1,lawn)
+#balt <- lmer(y ~ 1 + (1|machine), lawn, REML=FALSE)
+#lrstat[i] <- as.numeric(2*(logLik(balt)-logLik(bnull)))
+#}
+#mean(lrstat < 0.00001)
+#hist(lrstat,breaks = 50,main = "Histogram of Likelihood Ratio Statistic",xlab = "LRT")
+#options(warn=0)
+#mean(lrstat > -2.842171e-14 )
+
+# above code produces inconsistent results with exactRLRT, which is specifically designed for testing random effects.
+
+# including / excluding fixed effects has massive impact on p-value for random effect in both above
+# code and using exactRLRT
+smod <- lmer(time ~ 1+(1|machine) + manufact + speed, lawn, REML=T)
+exactRLRT(smod)
+
+```
+
+#### Fit a model with speed as the only fixed effect, and manufacturer as a random effect, with machines also  as  a random effect nested within manufacturer. Compare the variability between machines with the variability between manufacturers. 
+
+We have a fit a model as specified below (with speed as a fixed effect, manufacturer as a random effect and machine as a random effect nested with manufacturer). As can be seen from the model summary below, the standard deviation of the nested machine effect is very similar to that of the manufacturer effect. Hence the variability between machines is very similar to the variability between manufacturers.
+
+```{r q1 f}
+mixed_model <- lmer(data = lawn, time ~ 1 + (1|manufact) + (1|manufact:machine) + speed)
+sumary(mixed_model)
+VarCorr(mixed_model)
+```
+
+### Construct  bootstrap  confidence  intervals  for the terms in the model from part (f). Discuss whether the  variability can be ascribed solely to  manufacturers or to machines.
+
+The below bootstrap confidence intervals show that the variability can be ascribed either to sig01 or sig02 (which reflect the random effects). As both intervals include zero, we could plausibly remove and either one and test for significance, but we can not be certain about the order in which to do this. We should probably acribe variability to both random effects, instead of either one alone.
+
+```{r q1 g}
+confint(mixed_model, method="boot")
+```
+
+# Question 2: Sleep Study Data
+
+---
+
+## Chapter 11 (2016) : Repeated Measures and Longitudinal Data
+
+---
+
+#### Plot  the  data,  taking  care  to  distinguish  the  trajectories  of  the  different  subjects. Comment on the pattern of variation.
+
+A single line plot with subjects distinguished by colour and a line plot faceted by subject are presented below. Interactivity has been added (via plotly) to the first plot to improve the ability to distinguish subjects from each other. Most subjects show an increase in reaction time as the number of days of sleep deprivation increases. One notable exception is subject 335, whose reaction time actually decreases over the course of the study. Other subjects show a comparatively limited response, such as subject 309 and 310. A few subjects experience considerable and unpredictable variability in their average reaction time response to sleep deprivation, such as 308 and 332.
+
+```{r q2 a}
+data("sleepstudy")
+
+plot1 <- ggplot(data = sleepstudy) +
+    geom_line(mapping = aes(y = Reaction, x = Days, color = Subject)) +
+    scale_y_continuous(name = "Average Reaction Times (ms)",breaks = c(0,100,200,300,400,500),limits = c(0,500)) +
+    scale_x_continuous(name = "Days",c(0:9)) + 
+    labs(title = "Sleep Deprivation Study: reaction time vs days of restricted sleep",caption = "Subjects had full sleep on Day 0, on each subsequent night were restricted to 3 hours of sleep",subtitle = "Interactive!") +
+    theme_tufte()
+ggplotly(plot1) %>% config(displayModeBar = F)
+
+#p <- plot_ly(sleepstudy, x = ~Days, y = ~Reaction, color = ~Subject) %>%
+#  layout(title = "Average Reaction Time vs Number of Days of Sleep Deprivation", 
+#         xaxis = list(title = "Days"),yaxis = list(title = "Reaction Time (ms)")) %>%
+#    add_lines() 
+
+ggplot(data = sleepstudy) +
+    geom_line(mapping = aes(y = Reaction, x = Days)) +
+    scale_y_continuous(name = "Average Reaction Times (ms)",breaks = c(0,100,200,300,400,500),limits = c(0,500)) +
+    scale_x_continuous(name = "Days",c(0:9)) + 
+    labs(title = "Sleep Deprivation Study: reaction time vs days of restricted sleep",caption = "Subjects had full sleep on Day 0, on each subsequent night were restricted to 3 hours of sleep") +
+  facet_wrap(~Subject) +
+    theme_tufte()
+
+ggplot(data = sleepstudy) +
+    geom_boxplot(mapping = aes(x = Days,y = Reaction,group = Days), color = "red") +
+    geom_jitter(mapping = aes(x = Days, y = Reaction),alpha = 0.3,width = 0.2,height = 0.1) + 
+    scale_y_continuous(name = "Average Reaction Times (ms)",breaks = c(0,100,200,300,400,500),limits = c(0,500)) +
+    scale_x_continuous(name = "Days",c(0:9)) + 
+    labs(title = "Sleep Deprivation Study: reaction time vs days of restricted sleep",caption = "Original data overplotted in black") +
+    theme_tufte()
+```
+
+#### Fit a mixed effects model  that describes how  the  reaction  time varies linearly with days and allows for random variation in both the slope and intercepts of the subject lines. Under this model, would it be unusual for an individual to have a reaction time that does not increase over time? 
+
+From the [manual for the package](https://cran.r-project.org/web/packages/lme4/vignettes/lmer.pdf) and this [website](http://www.bodowinter.com/tutorial/bw_LME_tutorial2.pdf), we note the syntax on how to obtained a mixed effects model with random slopes and intercepts, for the subject lines. This is observed when we print the coefficients for the model, which shows a seperate intercept and slope for each subject (as indicated by the days column). 
+
+For each subject, reaction time varies linearly by days, as indicated in the coefficients table (and as indicated by the example predictions). The random effects for each subject are shown below the fixed effect coefficients.
+
+Given that all of the subject line slopes are positive, it would be very unusual for an individual to have a reaction time that does not increase over time. This does occur for one subject (of the 18 present in the study), subject 335. This abnormality was mentioned in the above EDA (Q2 a).
+
+```{r q2 b}
+#mixed_sleep_model <- lmer(Reaction ~  (1+Days | Subject) + Days, data = sleepstudy)
+# (1+) adds intercept for days and intercept for model is still present (so two intercept random effects)
+mixed_sleep_model <- lmer(Reaction ~  (Days | Subject) + Days, data = sleepstudy)
+sumary(mixed_sleep_model)
+coef(mixed_sleep_model)
+ranef(mixed_sleep_model)
+predict_sleep <- setNames(data.frame(matrix(ncol = 2, nrow = 9)), c("Days", "Subject"))
+predict_sleep$Days <- c(1:9)
+predict_sleep$Subject <- rep(308,9)
+predict(mixed_sleep_model,predict_sleep)
+diff(predict(mixed_sleep_model,predict_sleep))
+```
+
+
+#### Allow for quadratic effects in the previous model. Does the data support the inclusion of quadratic effects?
+
+First, a model is fitted using REML (to obtain less biased estimates) and the summary printed. Then we refit the original mixed effects model, and the model that allows for quadratic effects. As we are testing fixed effects, we must use ML estimation (so set REML = F - although it doesn't make a difference, in practice, to the p-value generated by the test). We see a similar result to testing significance via regular means - there is no signifcant difference between models. Using a bootstrap-based approach (PBmodcomp), results in very similar p-values. This is perhaps to be expected, as the model has a balanced design, with no missing observations.
+
+```{r q2 c}
+mixed_sleep_model_ML <- lmer(Reaction ~  (Days | Subject) + Days, data = sleepstudy,REML = F)
+mixed_quad_sleep_model_ML <- lmer(Reaction ~ ((Days^2) | Subject) + I(Days^2) + Days, data = sleepstudy,REML = F)
+KRmodcomp(mixed_quad_sleep_model_ML, mixed_sleep_model_ML)
+anova(mixed_quad_sleep_model_ML,mixed_sleep_model_ML)
+
+pmod <- PBmodcomp(mixed_quad_sleep_model_ML, mixed_sleep_model_ML)
+summary(pmod)
+
+
+```
+
+It is worth noting that there is virtually no difference in AIC, DIC and deviance, as indicated by the model results below. This further reinforces the conclusion that the inclusion of quadratic effects in unnecessary.
+
+```{r q2 c2}
+sumary(mixed_quad_sleep_model_ML)
+sumary(mixed_sleep_model_ML)
+#mixed_quad_sleep_model <- lmer(Reaction ~ (1+(Days^2) | Subject) + I(Days^2), data = sleepstudy, REML = F)
+#mixed_sleep_model <- lmer(Reaction ~  (1+Days | Subject) + Days, data = sleepstudy, REML = F)
+#KRmodcomp(mixed_quad_sleep_model, mixed_sleep_model) - error
+```
+
+
+#### Using the model from part (b), make the following diagnostic plots and interpret: 
+
+#### Residuals vs Fitted plot 
+
+The residuals vs fitted indicates good homoscedasticity, with the points evenly dispersed along the plot. Additionally, there does not appear to be any trend remaining the residuals. There appears to be three outliers with large residual values, set apart from the main cluster of points.
+
+```{r q2 d i}
+plot(mixed_sleep_model,main = "Residuals vs Fitted",ylab = "Pearson Residuals",xlab = "Fitted Values",col = "black")
+```
+
+The QQ plot indicates that the data follows the normal distribution reasonably well, with a small amount of deviation in the tails. Some outlier residuals are present and clearly deviate significantly from the expected distribution of residuals. 
+
+#### Normal QQ plot of the residuals. 
+
+```{r q2 d ii}
+qqnorm(residuals(mixed_sleep_model))
+qqline(residuals(mixed_sleep_model),col = 'red')
+```
+
+#### Normal QQ plot of both random effects.
+
+Given the small sample size, the random effects appear to be normally distributed, following the normal line reasonably closely. 
+
+```{r q2 d iii}
+par(mfrow=c(1,2),mar = c(5,5,5,5))
+qqnorm(ranef(mixed_sleep_model)$Subject$Days,main = "Normal Q-Q Plot: \n Days Random Effects")
+qqline(ranef(mixed_sleep_model)$Subject$Days,col = 'red')
+qqnorm(ranef(mixed_sleep_model)$Subject$`(Intercept)`,main = "Normal Q-Q Plot: \n Intercept Random Effects")
+qqline(ranef(mixed_sleep_model)$Subject$`(Intercept)`,col = 'red')
+```
+
+#### A scatterplot of the random effects.
+
+There is a minimal amoun of correlation between slopes and intercepts, indicating  we have not hit any variance boundaries during optimisation via REML [(ref)](https://stats.stackexchange.com/questions/323273/what-to-do-with-random-effects-correlation-that-equals-1-or-1). It also means we have the freedom interpret and test the effects of reaction time and increase in reaction with respect to days of sleep deprivation  (per subject) without the assumption of independance being violated.
+
+```{r q2 d iv}
+par(mfrow=c(1,1),mar = c(5,5,5,5))
+resid_mod <- as.data.frame(ranef(mixed_sleep_model)$Subject)
+plot(resid_mod,main = "Scatterplot of Random Effects: \n Days vs (Intercept)")
+```
+
+#### Identify any outlying cases and mark these on top of your initial plot. Try refitting the model without these cases and identify the largest change in the model fit. 
+
+Residuals were identified using the fitted vs residuals and QQ plot. After removing these observations, the diagnostic plots look much improved (although it is highly suspect as to whether removing these observations would be a valid approach; transformations or trying other types of models might be more appropriate).
+
+The largest changes in fits (in terms of individual subject lines) came from the new intercept for 330 and slope coefficient for 308, as shown below. AIC, DIC and deviane were all reduced on removal of the outliers, indicating a better model fit. 
+
+This model indicates each days of sleep deprivation has a slightly greater effect than the previous model. The intercept, or baseline reaction (with no sleep deprivation) has reduced slightly. The standard deviation of the random effects has increased, suggesting greater modelled variability in the population of subjects.
+
+```{r q2 e}
+paste("Outlier: ",c(unname(which(residuals(mixed_sleep_model) > 130)),unname(which(residuals(mixed_sleep_model) < -80))))
+sleepstudy[c(8,60,57),]
+mixed_sleep_model_no_out <- lmer(Reaction ~  (Days | Subject) + Days, data = sleepstudy[-c(8,60,57),])
+plot(mixed_sleep_model_no_out,main = "Residuals vs Fitted",ylab = "Pearson Residuals",xlab = "Fitted Values",col = "black")
+qqnorm(residuals(mixed_sleep_model_no_out))
+qqline(residuals(mixed_sleep_model_no_out),col = 'red')
+sumary(mixed_sleep_model_no_out)
+
+diffs <- as.data.frame(coef(mixed_sleep_model_no_out)$Subject) - as.data.frame(coef(mixed_sleep_model)$Subject)
+
+paste("Max Day Coefficient Change: ",rownames(diffs)[which(diffs$Days == max(diffs$Days))])
+paste("Max Intercept Change: ",rownames(diffs)[which(diffs$`(Intercept)` == max(diffs$`(Intercept)`))])
+```
+
+#### Simulate the response under your first model and plot it. Does the simulated data look like the actual data? 
+
+The predicted data follows the general trend of the actual data. However, it has none of the granular variability per-day that the original data has - i.e. all the troughs and peaks have been evened out from the linear fitting process. This could possibly be rectified by modelling the days variable as an ordered factor, instead of a numeric variable, i.e. allow a seperate random effect for each level of "Day".
+
+The simulated data looks a lot closer to the actual data than that simulated from a model which didn't account for subject level effects, however. 
+
+```{r q2 f}
+sleepstudy_predict <- sleepstudy[,c("Days","Subject")]
+sleepstudy_predict$Reaction  <- predict(mixed_sleep_model,sleepstudy_predict)
+
+ggplot(data = sleepstudy_predict) +
+    geom_line(mapping = aes(y = Reaction, x = Days)) +
+    scale_y_continuous(name = "Average Reaction Times (ms)",breaks = c(0,100,200,300,400,500),limits = c(0,500)) +
+    scale_x_continuous(name = "Days",c(0:9)) + 
+    labs(title = "Sleep Deprivation Study: reaction time vs days of restricted sleep",caption = "Subjects had full sleep on Day 0, on each subsequent night were restricted to 3 hours of sleep") +
+    facet_wrap(~Subject) +
+    theme_tufte()
+```

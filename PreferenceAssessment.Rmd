@@ -1,0 +1,143 @@
+---
+title: "PSYC314: Behaviour Analysis - Preference Assessment"
+subtitle: 'Project Supervisor: Tokiko Taylor'
+author: "Matthew Skiffington"
+date: "August 12, 2018"
+tags: [behaviour analysis, data analysis, dogs]
+output: 
+  html_document:
+    fontsize: 11pt
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    number_sections: false
+    df_print: paged
+    theme: journal
+    highlight: zenburn
+    code_folding: show 
+---
+<style type="text/css">
+
+h1.title {
+  text-align: center;
+}
+h3.subtitle {
+  text-align: center;
+}
+h4.author { /* Header 4 - and the author and data headers use this too  */
+
+  text-align: center;
+}
+h4.date { /* Header 4 - and the author and data headers use this too  */
+  font-size: 18px;
+  text-align: center;
+}
+</style>
+
+```{r setup, include=FALSE}
+library(knitr)
+library(magrittr)
+library(ggplot2)
+library(tibble)
+library(stargazer)
+library(kableExtra)
+opts_chunk$set(fig.width = 7)
+opts_chunk$set(fig.height = 5)
+opts_chunk$set(results = 'hold')
+knitr::opts_chunk$set(echo = TRUE)
+options(digits = 2)
+```
+
+# Preference Assessment
+
+## Preamble
+
+Murphy belongs to Kit Buckley, the residential life manager at Orchard Park. He spends three days per week at Orchard Park, outside the administration cabin, going on walks with staff and students. The assessment location was therefore selected as Murphy's everyday enviroment - by the administration cabin. The preference assessment took around 20 minutes. Unfortunately, as noted below, minor errors occured while collecting the data and this has been compensated for using simple scaling. The preference assessment process was video recorded and this video file is available to project supervisors on the shared Google Drive directory.
+
+## Project Stimuli
+
+Potential reinforcers that were presented in the preference assessment:
+
+* Baxters Meaty Rings with Real Chicken & Beef 1.5kg (A)
+* Baxters Choc treats made with Carob 250g (B)
+* Harringtons Salmon and Potato 2kg (C)
+* Fresh skinless chicken breast, cooked in canola oil (D)
+* Baxters Straps made with Real Beef 250g (E)
+* Vitapet Morsomes Duck Tenders 100g (F)
+
+
+All of these were purchased from the Countdown grocery store on Peachgrove Rd, Hamilton.
+
+Data was manually recorded on the data sheet by circling the stimulus Murphy choose with each pairing. This data was loaded into an excel spreadsheet and was imported in R for analysis. The raw data sheet is displayed below.
+
+![Preference Data Sheet](Preference assessment data sheet.jpg)
+
+## Data Analysis
+
+The data was imported and tidied.
+
+```{r data sheet}
+preferenceAssessment.df <- read.csv("PreferenceAssessment.csv")
+colnames(preferenceAssessment.df) <- c("Left Stimulus","Right Stimulus","Selected Stimulus")
+#kable(preferenceAssessment.df) %>%
+#  kable_styling("striped", full_width = F)
+levels(preferenceAssessment.df[,"Left Stimulus"]) <- list(A="Meaty Rings",B="Choc Treats",C="Salmon and Potato",D="Cooked Chicken Breast",E="Baxters Beef Straps",F="Duck Tenders")
+```
+
+A combination column was then created to check for duplicate combinations. This was done by creating a frequency table of the possible combinations. As can be seen, there are two errors, where duplicate combinations were entered (where C was confused with E). This tidied data imported from excel CSV is displayed below; 
+
+```{r pressure, echo=FALSE}
+preferenceAssessment.df[,"Combination Stimulus"] <- paste(as.character(preferenceAssessment.df[,"Left Stimulus"]), as.character(preferenceAssessment.df[,"Right Stimulus"]))
+kable(preferenceAssessment.df) %>%
+  kable_styling("striped", full_width = F) %>%
+  row_spec(c(5,15,25,28), bold = T, color = "white", background = "#D7261E")
+```
+
+As these errors constitute valid trials and as the final decision on preference is made on a proportional basis, these errors were left in and not removed. Logistical and time constraints prevented the ideal scenario of a re-attempt of the entire preference assessment.
+
+The number of trials selected is displayed below. The number of times a stimuli was presented is displayed in the 2nd frequency table. To check for left / right bias, the number of right and left selected stimuli was summed. As can be seen below, there is a considerable right hand bias.
+
+```{r trials selected}
+frequencySelected.df <- as.data.frame(table(preferenceAssessment.df[,"Selected Stimulus"]),caption = "Frequency table of selected stimuli")
+colnames(frequencySelected.df) <- c("Selected Stimulus","Frequency Selected")
+kable(frequencySelected.df) %>%
+  kable_styling("striped", full_width = F)
+frequencyAll.df <- as.data.frame(table(preferenceAssessment.df[,"Left Stimulus"])+table(preferenceAssessment.df[,"Right Stimulus"]),caption = "Frequency table of left and right presented stimuli")
+colnames(frequencyAll.df) <- c("Stimulus","No. of times presented on left or right")
+kable(frequencyAll.df) %>%
+  kable_styling("striped", full_width = F)
+
+print("Sum of Left Selected Stimuli :"); sum(preferenceAssessment.df[,"Selected Stimulus"] == preferenceAssessment.df[,"Left Stimulus"])
+print("Sum of Right Selected Stimuli "); sum(preferenceAssessment.df[,"Selected Stimulus"] == preferenceAssessment.df[,"Right Stimulus"])
+```
+
+The percentage chosen was calculated by dividing the trials selected by the number of times the stimulus was presented;
+
+```{r percentage chosen}
+dogPercent.df <- as.data.frame(table(preferenceAssessment.df[,"Selected Stimulus"])/(table(preferenceAssessment.df[,"Left Stimulus"])+table(preferenceAssessment.df[,"Right Stimulus"])))
+colnames(dogPercent.df) <- c("Stimulus", "Percentage Selected")
+kable(dogPercent.df) %>%
+  kable_styling("striped", full_width = F) %>%
+  column_spec(1:2, bold = T) %>%
+  row_spec(4, bold = T, color = "white", background = "#D7261E") %>%
+  row_spec(1, bold = T, color = "white", background = "#D7831D") %>%
+  row_spec(2, bold = T, color = "white", background = "#1D93D7")
+  
+  
+```
+
+## Conclusion
+
+From this we can see cooked chicken breast was the most preferred option, with meaty rings being second place. Choc treats were the least preferred option. As a balance between cost,  preference and practicality, meaty rings will be used as the reinforcer during the next stages of the project. Note that this assignment did not have the ideal equal allocation of trials to all stimuli (as you will note in the unbalanced frequency tables above and as highlighted earlier). Finally, a quick reminder about the mapping of letters to food names;
+
+```{r food mapping}
+Foodnames.df <- as.data.frame(c(A="Meaty Rings",B="Choc Treats",C="Salmon and Potato",D="Cooked Chicken Breast",E="Baxters Beef Straps",F="Duck Tenders"))
+colnames(Foodnames.df) <- c("Food description")
+kable(Foodnames.df) %>%
+  kable_styling("striped", full_width = F)
+```
+
+
+
+
+

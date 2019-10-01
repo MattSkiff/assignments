@@ -1,0 +1,342 @@
+---
+title: "Assignment 2 STAT521"
+author: "Matthew Skiffington"
+date: "2 April 2019"
+output: pdf_document
+---
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+#install.packages("faraway")
+library(faraway)
+library(ggplot2)
+options(scipen = 10)
+```
+
+#STAT521-19A Computational Statistics - Assignment 2 - Part 1 of 2
+
+## Question 1: Negative Binomial Distribution 
+
+### (e) Difficulties in using the canonical link function:
+
+The range of the linear equation of the coefficients and X predictors in our model can go from $-\infty \ to +\infty$. If the link function is $ln(\mu/(\mu+r))$, then the function is only defined where $\mu/(\mu+r) > 0$. This means if the linear equation of coefficients translate to $|-\mu| > +r$ or $|-r| > +\mu$, then the function will not be defined.
+
+It is possible that the mean of the random Y and the count of failures r will be the same, but oppositely signed. This would mean sigma = $ln(\mu/0)$, which would be undefined. Additionally, the link function will be undefined where both $\mu$ and the $r = 0$.
+
+### (f) When to use the chi or F test for deviance: 
+
+The $\chi^2$ test of deviance can be used when we know the scale parameter e.g. for poison and binomial, $\phi = 1$ so the test can be used. This is because the estimates of deviances must be computed by division by the scale parameter, which results in the scaled deviance. The F-test of deviance is used where the value of the dispersion parameter is not known, and an estimate of $\hat{\phi}$ must be used, for example, with the Gaussian model. Apparently, the F-test can also be used to account for over dispersion. Both types of tests compare nested models. This can be where the null is viewed as a nested model of the alternate hypothesis, or this can be where a smaller model $\omega$ is tested against a large model $\Omega$, where the parameters of $\omega$ are a subset of the parameters of $\Omega$.
+
+### (g) See written answers:
+
+## Question 2: Modelling with a Poisson GLM / Manual IRWLS
+
+### (a) Poisson model (5 geographic variables, coefficients and deviance):
+
+```{r 2a}
+data("gala")
+summary(pois_gala.mod <- 
+    glm(formula = Species ~ Area + Elevation + Nearest + Scruz + Adjacent,family = poisson,data = gala))
+print("Coefficients")
+pois_gala.mod$coefficients
+paste0("Deviance: ",pois_gala.mod$deviance)
+```
+
+### (b) Derivation of $d\eta/d\mu$ and weights function is included with paper assignment:
+
+### (c) Computing the first stage of the iteration; comparison of coefficients:
+
+They are all ready quite close, with the sum of coefficients being only 0.35 away from the sum of coefficients when fitting the regular GLM.
+
+```{r 2c}
+y <- gala$Species; mu <- y
+eta <- log(mu)
+z <- eta + y/mu - 1
+#w <- 1/mu
+w <- mu
+summary(model_i <- lm(z ~ Area + Elevation + Nearest + Scruz + Adjacent,weights = w,data = gala))
+print("Coefficient Differences")
+model_i$coefficients - pois_gala.mod$coefficients
+paste0("Sum of coefficient differences: ",sum(model_i$coefficients - pois_gala.mod$coefficients))
+```
+
+### (d)  Computing the current value of the deviance (2nd iteration):
+
+The deviance is quite far off, with a large difference between the R GLM function poisson deviance and the deviance on the 2nd iteration of our manual approach to IRWLS.
+
+```{r 2d}
+eta <- model_i$fit
+mu <- exp(eta)
+z <- eta + y/mu - 1
+#w <- 1/mu
+w <- mu
+summary(model_i <- lm(z ~ Area + Elevation + Nearest + Scruz + Adjacent,weights = w,data = gala))
+print("Coefficient Differences")
+model_i$coefficients - pois_gala.mod$coefficients
+deviance <- 2*sum(gala$Species*log(gala$Species/mu)-(gala$Species-mu))
+paste0("Deviance: ",deviance)
+paste0("Deviance Difference: ",deviance - pois_gala.mod$deviance)
+paste0("Sum of coefficient differences: ",sum(model_i$coefficients - pois_gala.mod$coefficients))
+```
+
+### (e) Deviance and coefficients for 3rd iteration of GLM IRWLS:
+
+The coefficients have less than a $1*10^-5$ difference between them and the deviance has only a 0.03 difference.
+
+```{r 2e}
+eta <- model_i$fit
+mu <- exp(eta)
+z <- eta + y/mu - 1
+#w <- 1/mu
+w <- mu
+summary(model_i <- lm(z ~ Area + Elevation + Nearest + Scruz + Adjacent,weights = w,data = gala))
+print("Coefficient Differences")
+model_i$coefficients - pois_gala.mod$coefficients
+deviance <- 2*sum(gala$Species*log(gala$Species/mu)-(gala$Species-mu))
+paste0("Deviance: ",deviance)
+paste0("Deviance Difference: ",deviance - pois_gala.mod$deviance)
+paste0("Sum of coefficient differences: ",sum(model_i$coefficients - pois_gala.mod$coefficients))
+```
+
+### (f) Repeat iterations until convergence; report / compare coefficients:
+
+Final estimated coefficients are virtually identical (to within a reasonable degree of error) to estimates produced by GLM fit (see below output).
+
+```{r 2f}
+deviance_i <- 999
+deviance_j <- 0
+diffs = 999
+i <- 0
+while (abs(diffs) > 10^-300) {
+  deviance_j <- deviance_i
+  eta <- model_i$fit
+  mu <- exp(eta)
+  z <- eta + y/mu - 1
+  #w <- 1/mu
+  w <- mu
+  model_i <- lm(z ~ Area + Elevation + Nearest + Scruz + Adjacent,weights = w,data = gala)
+  deviance_i <- 2*sum(gala$Species*log(gala$Species/mu)-(gala$Species-mu))
+  i <- i + 1
+  diffs <- deviance_i - deviance_j
+}
+summary(model_i)
+paste0("Iterations: ",i)
+print("Poisson R GLM coefficients")
+pois_gala.mod$coefficients
+print("Manual IRWLS coefficients")
+model_i$coefficients
+print("Coefficient Differences")
+model_i$coefficients - pois_gala.mod$coefficients
+paste0("Sum of coefficient differences: ",sum(model_i$coefficients - pois_gala.mod$coefficients))
+paste0("Deviance Difference: ",deviance_i - pois_gala.mod$deviance)
+paste0("Deviance: ",deviance_i)
+```
+
+### (g) Standard errors from IRWLS / Comparison with R GLM:
+
+The standard errors are extremely close when manually calculated. However, if the standard errors are naively extracted from the linear model object used during the manual IRWLS process, they will be incorrect (an over-estimate, interestingly). This intuitively suggests the t-statistics and associated p-values for coefficients are not to be trusted from this model object either.
+
+```{r 2g}
+print("Standard Errors R GLM | using inbuilt estimates:")
+summary(pois_gala.mod)$coefficients
+
+print("Standard Errors Manaul IRWLS | using inbuilt estimates (incorrect):")
+summary(model_i)$coefficients
+
+print("Standard Errors R GLM:")
+xg <- model.matrix(pois_gala.mod)
+wg <- diag(pois_gala.mod$weights)
+sqrt(diag(solve(t(xg) %*% wg %*% xg)))
+
+print("Standard Errors Manual IRWLS:")
+xm <- model.matrix(model_i)
+wm <- diag(w)
+sqrt(diag(solve(t(xm) %*% wm %*% xm)))
+```
+
+## Question 3: Modelling using Binomial and Quasi-Binomial GLMs
+
+### (a) Plotting blotch response against predictors, relationship:
+
+Site and Leafblotch appear to have quite a direct strong linear positive correlation, with a consistent and minimal amount of noise in site at each unique value of leaf blotch. Leaf blotch and variety and variety have a weaker linear positive correlation, with a lot of variation in variety at each unique value of leaf blotch. The data is higher regular and structured, with remarkable homogeniety in relative differences between observations (suggesting it has been generated artificially, or there is minimal uncertainty in the interpretation of the data itself i.e. it is a purely didactic dataset).  
+
+Creating the boxplots to show the relationship of leafblotch by site and variety elucidated the relationship much more clearly, and demonstrated that some sites and varieties had significantly more leaf area affected by leaf blotch than other sites and varieties. In particular, sites and varieties 7,8,9 appeared to have much more leafblotch and variation in leafblotch than sites 1,2,3 and 4.
+
+```{r 3a}
+data("leafblotch")
+par(mfrow=c(1,2))
+plot(y = leafblotch$leafblotch,
+     x = leafblotch$site,
+     main = "Plot of Leafblotch and Site",
+     xlab = "Site",
+     ylab = "Leaf Blotch")
+plot(y = leafblotch$leafblotch,
+     x = leafblotch$variety,
+     main = "Plot of Leafblotch and Variety",
+     xlab = "Variety",
+     ylab = "Leaf Blotch")
+par(mfrow=c(1,1))
+paste0("Correlation Blotch~Site: ",cor(as.numeric(leafblotch$blotch),as.numeric(leafblotch$site)))
+paste0("Correlation Blotch~Variety: ",cor(as.numeric(leafblotch$blotch),as.numeric(leafblotch$variety)))
+
+boxplot(leafblotch$blotch~leafblotch$site,
+        main = "Boxplot of Leafblotch and Site",
+        xlab = "Site",
+        ylab = "Leaf Blotch",
+        col = "red")
+boxplot(leafblotch$blotch~leafblotch$variety,
+        main = "Plot of Leafblotch and Variety",
+        xlab = "Variety",
+        ylab = "Leaf Blotch",
+        col = "blue")
+```
+
+### (b) Fit binomial with site / variety; deviance, DF, comment:
+
+As Faraway states on pg. 30 of the textbook, a $\chi^2_d$ variable has mean $d$ and standard deviation $\sqrt{2d}$, hence if the deviance is way in excess of the residual DF we can casually reject the null (and vice-versa in this instance). 
+
+However, Faraway goes on to specifically mention a major issue we have with our data; that we do not have the raw responses (i.e. binary $y_i$ 0/1s and $n_i$ for each $y_i$) but only $\hat{p}$. Thus deviance is not a test of goodness of fit and is not even approximately $\chi^2$ distributed - hence we should be using other methods (e.g. Hosmer-Lemeshow test).
+
+On the basis of the p-value we have calculated, we would suggest the model fits well, however, given what we know about the nature of the responses (being proportions, not binary responses and counts) we can not really trust this value and should use a difference test instead.
+
+```{r 3b}
+summary(blotch_glm.mod <- 
+    glm(formula = blotch ~ site + variety,
+        family = binomial,data = leafblotch))
+print("Deviance:")
+summary(blotch_glm.mod)$deviance
+print("DF:")
+summary(blotch_glm.mod)$df
+
+print("Goodness of Fit test")
+pchisq(deviance(blotch_glm.mod),df.residual(blotch_glm.mod),lower = F)
+```
+
+### (c) Fit Quasi-Binomial, report dispersion, derivation:
+
+Fitted using a variance-mean relation of $V = \mu(1-\mu)$ i.e. the canonical link mentioned by the textbook on pg 117.
+
+$$\hat{\phi} = X^2/n-p $$
+
+Where $X$ are the mean model parameters (where $X^2 =\sum^n_{i=1}(y_i-\hat{u_i})/V(\hat{u_i})$), $n$ is the number of observations and $p$ is the number of parameters. 
+
+[SO Reference](https://stats.stackexchange.com/questions/314948/quasi-likelihood-quasi-poisson)
+
+(I didn't understand what $X^2$ was initially) - also page 121.
+
+Handily (and appropriately enough), the pearsons residuals are calculated in a way such that their sum is equivalent to the $X^2$ statistic.
+
+[SO Reference 2](https://stats.stackexchange.com/questions/29653/how-can-i-compute-pearsons-chi2-test-statistic-for-lack-of-fit-on-a-logisti)
+
+```{r 3c}
+quasibinomial(link = "logit")
+quasi_blotch_glm.mod <- glm(formula = blotch ~ site + variety,
+                            family=quasibinomial,
+                            data = leafblotch)
+summary(quasi_blotch_glm.mod)
+
+paste0("Dispersion for Quasi-Binomial GLM: ",summary(quasi_blotch_glm.mod)$dispersion)
+paste0("Calculated Dispersion: ",sum(residuals(quasi_blotch_glm.mod, type = "pearson")^2)/(length(leafblotch$blotch)-length(quasi_blotch_glm.mod$coefficients)))
+```
+
+### (d) Plot Deviance residuals against fitted, interpret:
+
+Well, we can very clearly see that abandoning a fixed mean-variance relationship is probably a good idea, given the massive amount of overdispersion present. If this was a regular linear regression we would have a massive violation of our assumptions. We can clearly see that variance does not vary linearly with the mean.
+
+```{r 3d}
+plot(y = logit(quasi_blotch_glm.mod$fitted.values),
+     x = residuals(quasi_blotch_glm.mod, type = "deviance"),
+     main = "Plot of Link-Scaled Fitted Values and Deviance Residuals",
+     sub = "Quasi-Poisson Model fitted (default link)",
+     xlab = "Deviance Residuals",
+     ylab = "Link-Scaled Fitted Values")
+```
+
+### (e) Define weights from new V(), fit, plot residuals, comment:
+
+From pg 118;
+
+As $\mu(1-\mu) = \mu-\mu^2$ and $\mu^2(1-\mu^2) = \mu^2+\mu^4-2\mu^3$ then $(\mu-\mu^2)*(\mu-\mu^2) = \mu^2(1-\mu^2)$ i.e. $(\mu-\mu^2)*link = desired \ V$
+
+A weight function was empirically found to produce homogeneous variance in the residuals.
+
+Weight function: $1/\mu(1-\mu)$
+
+```{r 3e}
+#w = 1/(leafblotch$blotch*(1-leafblotch$blotch)) - fails with infinity, need to use iterated estimates of u
+w = 1/(quasi_blotch_glm.mod$fitted.values*(1-quasi_blotch_glm.mod$fitted.values))
+
+quasi_weighted_blotch_glm.mod <- 
+  glm(formula = blotch ~ site + variety,
+      family=quasibinomial,
+      data = leafblotch,
+      weights = w)
+plot(y = logit(quasi_weighted_blotch_glm.mod$fitted.values),
+     x = residuals(quasi_weighted_blotch_glm.mod, type = "deviance"),
+     main = "Plot of Link-Scaled Fitted Values and Deviance Residuals",
+     sub = "Quasi-Poisson Model fitted, link = default, weights = u(1-u)",
+     xlab = "Deviance Residuals",
+     ylab = "Link-Scaled Fitted Values")
+```
+
+### (f) Test significance of predictors with F-test:
+
+The results of the F-tests run on the last predictors of the two-variable model and on variations of the model run with only a single predictor indicate that all terms are significant under every possible parameterisation (all p-values << 0.05).
+
+```{r 3f}
+drop1(quasi_weighted_blotch_glm.mod,test = "F")
+
+# single var models
+
+quasi_blotch_glm.mod <- glm(formula = blotch ~ site,
+                            family=quasibinomial,
+                            data = leafblotch)
+w = 1/(quasi_blotch_glm.mod$fitted.values*(1-quasi_blotch_glm.mod$fitted.values))
+
+quasi_weighted_blotch_glm.mod <- 
+  glm(formula = blotch ~ site,
+      family=quasibinomial,
+      data = leafblotch,
+      weights = w)
+
+drop1(quasi_weighted_blotch_glm.mod,test = "F")
+
+quasi_blotch_glm.mod <- glm(formula = blotch ~ variety,
+                            family=quasibinomial,
+                            data = leafblotch)
+w = 1/(quasi_blotch_glm.mod$fitted.values*(1-quasi_blotch_glm.mod$fitted.values))
+
+quasi_weighted_blotch_glm.mod <- 
+  glm(formula = blotch ~ variety,
+      family=quasibinomial,
+      data = leafblotch,
+      weights = w)
+
+drop1(quasi_weighted_blotch_glm.mod,test = "F")
+```
+
+### (g) Interactive potential of site:variety combinations:
+
+Given that there is only one data point for each unique combination of site and variety, detecting interactions between particular levels of these factors is exceptionally difficult. On the basis of the heatmap against deviance residuals, I would say the interaction of variety 6 and site 9 is the most abnormal (and hence has the most evidence for some interaction that interferes with the expected pattern).
+
+```{r 3g}
+coplot(data = leafblotch, blotch ~  site | variety,rows = 1)
+coplot(data = leafblotch, blotch ~  variety | site,rows = 1)
+ggplot(data = leafblotch) + 
+  geom_raster(mapping = aes(x = site,y = variety,fill = blotch)) +
+  scale_fill_gradientn(colours=c("yellow","red")) +
+  labs(title = "Heatmap of Blotch by Variety and Site",y = "Variety",x = "Site") +
+  theme_light()
+
+lb<- leafblotch
+lb$dev <- residuals(quasi_weighted_blotch_glm.mod,type = "deviance")
+
+ggplot(data = lb) + 
+  geom_raster(mapping = aes(x = site,y = variety,fill = dev)) +
+  scale_fill_gradientn(colours=c("yellow","red")) +
+  labs(title = "Heatmap of Deviance Residuals by Variety and Site",y = "Variety",x = "Site") +
+  theme_light()
+```
+
+
+

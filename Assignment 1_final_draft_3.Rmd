@@ -1,0 +1,505 @@
+---
+title: "Assignment 1"
+author: "Matthew Skiffington"
+output: 
+  html_document: 
+    toc: true
+    toc_depth: 3
+    toc_float: true
+
+---
+```{r setup, warning = FALSE}
+library(knitr)
+library(ggplot2)
+library(gridExtra)
+library(kableExtra)
+opts_chunk$set(fig.width = 12)
+opts_chunk$set(fig.height = 10)
+opts_chunk$set(warning = F)
+```
+
+Disclaimer: some of this code, has been adapted from various sources, blogs, stack overflow QA and of course documentation.
+
+My assignment philosphy is to use R as much and as fully as possible to complete all tasks (barring tasks where the alternative is to try using excel or R commander).
+
+I want to become proficient and fluent with R. Eventually I would like to extend out to Python, Hadoop and other relevant data technologies (while learning SQL as part of COMPX223).
+
+Given how extensible and powerful R is, this must be the optimal long-run choice. However, this does mean I will be having to (earnestly) interpret the assignment questions more (as they often hinge on mini-tab output, which is not neccesarily fully specified).
+
+## Task 1: Collection of Individual Ruler Data 
+
+The ruler data was collected and uploaded to the Moodle portal as per the requirements outlined in the assignment document. The header of raw data as filled in the provided excel spreadsheet is displayed below;
+
+```{r Display of Initial Data}
+StudentDataR <- read.csv("StudentDataR.csv")
+StudentDataR <- StudentDataR[,c(1:7)]
+StudentDataR <- na.omit(StudentDataR)
+kable(StudentDataR,"html", row.names = T)  %>%
+  kable_styling(bootstrap_options = "striped", font_size = 6)
+```
+
+## Task 2 : Processing and Display of Individual Ruler Data
+
+### a. Import and conversion
+
+The conversion used was: $$t=\sqrt{20d}$$ and was applied to both columns of ruler-drop measurements. The intial and converted ruler-drop data is shown below;
+
+```{r Ruler Data, results = "hold"}
+rulerdata <- read.csv("StudentDatacolsOnly.csv", header = F)
+rulerdata <- rulerdata[,c(1,2)]
+rulerdata <- na.omit(rulerdata)
+colnames(rulerdata) <- c("Dom_hand_cm","Non_dom_hand_cm")
+rulerdata$Dom_hand_react <- sqrt(rulerdata$Dom_hand_cm * 20)
+rulerdata$Non_dom_hand_react <- sqrt(rulerdata$Non_dom_hand_cm * 20)
+kable(rulerdata,"html", caption = "Ruler Drop Data & Converted Reaction Times", row.names = T)  %>%
+  kable_styling(bootstrap_options = c("striped","condensed"), font_size = 8, full_width = F, position = "float_left")
+```
+
+### b. Presentation of basic descriptive statistics
+
+Below are some summary statistics of the ruler data, after conversion to reaction times (all units of reactions times are in centiseconds [cs]);
+```{r Summary Ruler Data Reaction Times, results = "hold"}
+summary(rulerdata[,c(3,4)])
+cat("Number of observations: \n")
+sapply(rulerdata[,c(3,4)], length)
+cat("Standard Deviations of Reaction Times: \n") 
+sapply(rulerdata[,c(3,4)], sd)
+```
+
+### c. Display dotplots
+
+Below are dotplots summarising the distribution of distances where the rulers were caught;
+```{r Reaction Time Dotplots}
+Dominant_reaction_time_dotplot <- ggplot(data = rulerdata) + geom_dotplot(mapping = aes(x = Dom_hand_react), binaxis = 'x', binwidth = 0.2) +
+  theme_minimal() +
+  theme(axis.text.y = element_blank()) +
+  ylab("") +
+  xlab("Dominant Hand Reaction Time") +
+  ggtitle("Dotplot of Dominant Hand Reaction Time")
+
+Non_dominant_reaction_time_dotplot <- ggplot(data = rulerdata) +
+  geom_dotplot(mapping = aes(x = Non_dom_hand_react), binaxis = 'x', binwidth = 0.2) +
+  theme_minimal() +
+  theme(axis.text.y = element_blank()) +
+  ylab("") +
+  xlab("Non Dominant Hand Reaction Time") +
+  ggtitle("Dotplot of Non-Dominant Hand Reaction Time")
+
+grid.arrange(Dominant_reaction_time_dotplot,Non_dominant_reaction_time_dotplot)
+```
+
+### d. Display a line graph
+
+Below is a line graph of Run Number against Reaction Time by Handedness, with the smoother applied as specified.
+
+I have actually used a LOESS smoother, not a LOWESS smoother. However, the two methods are very similar, as described here;
+
+http://geog.uoregon.edu/bartlein/old_courses/geog414f03/lectures/lec05.htm
+
+>"The difference between the two acronyms or names is mostly superficial, but there is an actual difference...(lowess) was implemented first, while the latter (loess) is more flexible and powerful" \n *(Patrick Bartlein, Advanced Geographic Data Analysis Scatter-diagram smoothing (Nonparametric regression))*
+
+From the screenshot and the mini tab support page, it looks as if the default number of steps have been used. Specifying multiple (robust) steps (otherwise referred to as "robustifying iterations") for a loess curve is not easy in ggplot (although using the base stats/graphics package to fit & plot a loess model or using a seperate package, like gplots, would achieve this). Specifying the span (alpha, or f) is an included parameter in ggplot2.
+
+Hence here I have neglected to pursue this route (after trying for two hours), given lowess/loess's main use as an exploratory tool (in this context), not a tool for statistical inference (and additionally, as only the mini tab defaults were specified and the rabbit hole of the concept robustifying iterations is not handled in this course).
+
+```{r Line Graph of Run Number and Reaction Time}
+#loess_model_1 <- loess(rownames(rulerdata) ~ Non_dom_hand_react, data = rulerdata)
+#loess_model_2 <- loess(rownames(rulerdata) ~ Dom_hand_react, data = rulerdata)
+
+ggplot(data = rulerdata) +
+  geom_smooth(mapping = aes(x = as.numeric(rownames(rulerdata)), y = Non_dom_hand_react,group = 1,color = "blue"), method = "loess", span = 0.5, se = F) +
+    geom_smooth(mapping = aes(x = as.numeric(rownames(rulerdata)), y = Dom_hand_react,group = 1, color = "red"), method = "loess", span = 0.5, se = F) +
+    scale_color_manual(name = "Handedness",values = c("blue","red"),labels = c("Non-Dominant Hand","Dominant-Hand")) +
+    labs(title = "Run Number and Reaction Times", caption = "Using LOESS smoothing with span = 0.5 as requested") +
+    ylab("Reaction Times (cs)") +
+    xlab("Run Number")
+```
+
+### e. Discussion of the Data
+
+From the basic descriptive statistics, we can see that the spread of mean dominant hand reaction times is greater than the spread of  non-dominant hand reaction times, although this is a small difference. The mean of non-dominant hand reaction times is greater than the mean of dominant hand reaction times, again by a relatively small amount. The range of the data across both dominant and non-dominant hand reaction times is relatively similar, with the same maximum derived from the way the data was coded when rulers were missed (i.e. a 31 cm ruler drop distance translates to a 24.9 cs reaction time).
+
+Looking at the dotplots, there appears to be several clusters of data around 18-23 cs for the dominant hand and between 20 and 23 for the non-dominant hand. For both hands, there are a few outliers above and below these clusters. There is considerable overlap in reaction times between both hands. As mentioned, both of the upper outliers by 25 cs are due to missing the ruler.
+
+While I am not a fan of smoothing data that has been collected in this way (too few data points, too spares, not sure about apply local regression to these variables), the graph of run number and reaction times has a remarkable symmetry about 20 cs. However, there really is no appropriate causal reason for this pattern and it is in all likehood due to chance. The spike at the beginning of the dominant hand line and at the end of the non-dominant hand line are likely due to the previous discussed outliers. Were these to be excluded from the analysis (i.e. assuming there was some reason for missing the ruler, such as distraction or poor hand placement etc) it is possible there would be a consistent trend of higher reaction times for my non-dominant hand reaction time. Again, most of the data falls within the previously established 18-23 cs bracket, although dominant hand reaction times tend to be under 20 cs, whilst non-dominant hand reaction times tend to be above 20 cs.
+
+Generally, the sample size appears to be too small to establish a consistent pattern to the relationship between run number and reaction time. Using the lowess smoother, both dominant and non-dominant hand appear to have a fairly random, variable pattern (consciously ignoring the urge to over prescribe reasoning to every bump and wiggle).
+
+## Task 3: Broad Band Data
+
+### a. Plot histograms, with split data, with distribution overlay, with vertical arrangement of panels. Add summary statistics. Optional boxplots.
+
+Using ggplot, it to include a distribution with the histogram, is it neccesary to seperately overlay a density curve. This ends up standardising the histogram to a density histogram, as the package resists the use of multiple scales as a statistical guideline (see Hadley's reply):
+
+https://stackoverflow.com/questions/3099219/plot-with-2-y-axes-one-y-axis-on-the-left-and-another-y-axis-on-the-right
+
+Summary statistics are provided seperately, as per the intial individual-level ruler data.
+
+```{r import broadband data 2018}
+broadband2018 <- read.csv("broadband2018.csv")
+```
+```{r histograms, fig.height = 20}
+levels(broadband2018$lineserver)[levels(broadband2018$lineserver) == "wlgakl"] <- "Wellington Exchange to Auckland Server"
+levels(broadband2018$lineserver)[levels(broadband2018$lineserver) == "wlgwlg"] <- "Wellington Exchange to Wellington Server"
+broadband2018$day <- as.character(broadband2018$day)
+broadband2018$day <- paste(broadband2018$day,"/18", sep = "")
+broadband2018$day <- as.Date(broadband2018$day,"%d/%m/%y")
+ggplot(data = broadband2018,aes(x = ratedownMb.s)) +
+  geom_histogram(aes(fill = lineserver, y = ..density..),bins = 30) +
+  geom_density(alpha = 0.2, aes(fill = lineserver)) +
+ # scale_color_manual(name = "Line Server", values = c("Red","Blue"), labels = c("Wellington to Auckland","Wellington to Wellington")) +
+  facet_wrap(~lineserver, ncol = 1, nrow = 2) +
+    ylab("Density") +
+    xlab("Download Rate (Mb/s)") +
+    ggtitle("Histogram & Density Plot of Download Rates by Line Server") +
+    labs(caption = "shown on the same scale, as multiple scales is discouraged (and a difficult process in ggplot2)") +
+ theme(legend.position = "none")
+```
+```{r optional boxplots}
+ggplot(data = broadband2018,aes(x = lineserver, y = ratedownMb.s)) +
+  geom_boxplot(aes(fill = lineserver)) +
+ theme(legend.position = "none") +
+  ylab("Download Rate (Mb/s)") +
+    xlab("Line Server") +
+    ggtitle("Boxplots of Download Rates by Line Server") 
+```
+
+```{r summary statistics, results = "hold"}
+cat("Wellington Exchange to Auckland Server Summary Stats: \n")
+summary(broadband2018[,c("ratedownMb.s")][which(broadband2018$lineserver == "Wellington Exchange to Auckland Server")])
+cat("Number of observations: \n")
+length(broadband2018[,c("ratedownMb.s")][which(broadband2018$lineserver == "Wellington Exchange to Auckland Server")])
+cat("Standard Deviations of Download Speeds: \n") 
+sd(broadband2018[,c("ratedownMb.s")][which(broadband2018$lineserver == "Wellington Exchange to Auckland Server")])
+cat("Wellington Exchange to Wellington Server Summary Stats: \n")
+summary(broadband2018[,c("ratedownMb.s")][which(broadband2018$lineserver == "Wellington Exchange to Wellington Server")])
+cat("Number of observations: \n")
+length(broadband2018[,c("ratedownMb.s")][which(broadband2018$lineserver == "Wellington Exchange to Wellington Server")])
+cat("Standard Deviations of Download Speeds: \n") 
+sd(broadband2018[,c("ratedownMb.s")][which(broadband2018$lineserver == "Wellington Exchange to Wellington Server")])
+```
+
+### b. Description of histograms (including summary statistics).
+
+Looking at the histograms, there is a very strong bim-modality present in the data, with a peak around 2 Mb/s and a second peak around 14 MB/s on the Wellington server The Auckland server appears to have the same peaks, but the second peak looks to be centered around a slightly higher download rate than the Wellington lineserver. The first peak for the Auckland server looks to have slightly less negative skew and slightly more positive skew. The are comparitvely few download rates observed between these two peaks. The boxplots provide similar information in a much less granular fashion and completely miss the bimodality present in the data (violin plots with quantiles printed on them are a good alternative to boxplots in certain cases).
+
+The summary statistics support the above comments about the observed distributions in the histogram. The means, medians and quartiles for the Wellington server all are lower for download speeds than the Auckland server. Although it is a small difference, given the number of observations `r nrow(broadband2018)` this could constitute a significant difference. However, the variance is very high and given the unsusual distribution of the sample data, there could be a more logical way to analyse the data (for example, using the hour variable to only compare distributions for each hour).
+
+Hence, the histograms are summary statistics suggest that the Auckland server (lineserver) tends to provide a higher download speed than the Wellington server (lineserver).
+
+### c. Consumer perspective (average as estimator, alternative feature)
+
+The spread (or variance, standard deviation) in download rates could be more relevant to a consumer. This is because different consumers have different needs (e.g. email only, basic web browsing, low latency gaming, high bandwidth media consumption, file transfer needs, server requirements). A user will usually require at least a minimum download speed to be satisfied, but higher speeds than this may produce only marginal (or non-existent) gains in satisfaction.
+
+Hence, the only relevant aspect is when download (or upload) rates dip below a certain speed level, which will be different for different categories of consumers. Each of the peaks in this bi-modal distribution could reflect different services offered by the ISP to consumers. Each of the variances about those peaks (partially measured by overall variance and standard deviation) will govern how often a user dips below this "minimum speed for satisfaction" level. In this instance, from the basic summary statistics, we see that the Wellington server actually has a slightly lower standard deviation.
+
+However, the Auckland server has a smaller proportion of people between these two modalities. People experiencing download rates in this region (between 5-10 Mb/s) could likely be high-tier consumers who are experiencing lower download speeds than usual due to network congestion. This would like cause frustration for a consumer. Hence, using Auckland server could be beneficial (if possible) for a consumer.
+
+An alternative explanation is that all ISP consumers are on the same plan, and that the lower download rate modality reflects speeds experienced across the network to all consumers when network congestion is high. Hence, the most relevant feature in this instance is not marginal improvements in mean download rates, but rather a lower proportion of download speeds experienced in this modality, which may be too slow to use certain internet services with (e.g. high definition video).
+
+### d. i: Plot downrates against hour, by line server, using smoothers. Describe relationship and consistency of pattern.
+
+```{r Down rates by hour of day}
+ggplot(data = broadband2018, aes(x = hour, y = ratedownMb.s)) +
+    theme_minimal() +
+    geom_point(aes(color = lineserver), position = "jitter", alpha = 0.2) +
+    geom_smooth(aes(color = lineserver), method = "loess") +
+    ylab("Download Rate (Mb/s)") +
+    xlab("Hour of day") +
+    ggtitle("Scatterplot of Download Rates by Line Server & Hour of Day") +
+    labs(caption = "includes LOESS curves and uses jittered points") +
+    theme(legend.position = "bottom")
+```
+
+The general relationship between download rates and hour of day appears to be polynomial, possibly third-order (having a sinusoidal shape). There is a large rounded peak around 5 (5am, presumably), where maximal download rates are experienced. The download rates then continuously worsen over the course of the day, being especially poor from 4-6pm and reaching a nadir around hour 20 (presumably 8pm). The download rates then plateu over the next few hours before beginning to increase again from 11pm onwards. 
+
+This is an intuitive result, as it follows that few people would be consuming heavy bandwidth very early in the morning (with most asleep or preparing for work). As more consumers wake and begin using the internet (at home, school or at work), network congestion worsens from this point. It also logically follows that as primary, secondary and teriary students arrive home from 3pm, usuage will increase (as high bandwidth usage increases). Finally, as the majority of the workforce returns around 4-6pm, there it continues to worsen, before reaching a plateu from 8-11pm.
+
+This pattern appears to be highly consistent between lineserver categories (at least, when visualised via LOESS). There is a slightly greater difference in download speeds around midday, and a slightly lesser difference in download speeds in the late afternoon and evening.
+
+### d. ii: Consistency of relationship by day. Facet prior graph by day. Note consistent trends and other patterns.
+
+```{r Down rates by hour of day, faceted by day, fig.height = 40}
+ggplot(data = broadband2018, aes(x = hour, y = ratedownMb.s)) +
+  theme_minimal() +
+    geom_point(aes(color = lineserver), position = "jitter", alpha = 0.2) +
+    geom_smooth(aes(color = lineserver), method = "loess") +
+    ylab("Download Rate (Mb/s)") +
+    xlab("Hour of day") +
+    ggtitle("Scatterplot of Download Rates by Line Server & Hour of Day") +
+    labs(caption = "includes LOESS curves and uses jittered points") +
+    theme(legend.position = "bottom") + 
+  facet_wrap(~day, nrow = 10, ncol = 3)
+```
+
+While there is considerable variation in the precise shape of the curves day to day, the general structure of the curves (which would be well approximated by a third-order polynomial, or a sinusoidal function) remains the same. However, on serveral days, this pattern is almost absent. For example, on the 18/06, the relationship could almost be approximated as a linear function, or a weak 2nd order polynomial. On this date, on the 20/06 and the 21/06, the intial trends identified are much weaker and more of the weak 2nd order polynomal form earlier described.
+
+The consistency between lineserver categories also varies considerably, and on some days is almost non-existent. For example, on the 07/06, both servers delivered virtually identical speeds over the course of the day. In contrast, on the 09/06, there was high variation around midnight, with convergence in speeds between servers in the late afternoon/evening.
+
+It is difficult to acscribe a trend to the partial groups on the 27/05 and the 22/06, where the date range of the dataset begins and ends. This is because the smoothing is applied to much smaller range of hours on those two days. A more appropriate way to analyse this data might be to concatenate day and hour, producing an ordered factor variable, to model across the entire timespan of the data at once (instead of faceting by day).
+
+## Task 4: Analysis of the Class Measurements
+
+### a. Produce a scatterplot of mean reaction times
+
+A summary of means of the collated student data was imported from the csv file. A scatterplot of the means of Dominant versus Non-Dominant hands was then produced. This loooks to be about a linear 1-to-1 relationship (with a hypothetical intercept possibly near zero), which implies we may find there to be no significant difference between the reaction times of the dominant and non-dominant hands. There are some scattered outliers of very low mean reaction times (less than 14) on each variable.
+
+```{r import summary student data}
+SummaryStudentData <- read.csv("SummaryStudentData2018.csv") 
+```
+```{r scatterplot of mean reaction times}
+ggplot(data = SummaryStudentData) +
+  theme_minimal() +
+    geom_point(mapping = aes(x = MeanNonDomTime , y = MeanDomTime)) +
+    labs(title = "Mean Reaction Time for Dominant versus Non Dominant Hands", caption = "Data collected from STAT352 & ENGG381 - 18A Students") +
+             ylab("Mean Reaction Time Dominant Hand (cs)") +
+             xlab("Mean Reaction Time Non-Dominant Hand (cs)")
+```
+
+### b. Create a column of differences / test plausibility (PP plot)
+
+Method in R for PPlots (as opposed to the similar and ubiquitous QQ Plots) from here: http://homepage.divms.uiowa.edu/~luke/classes/STAT4580/qqpp.html
+
+The red reference line in this case indicates the ECDF of the perfect normal distribution.
+
+The formatting of the mini tab output is highly idiosyncratic - I couldn't find similar plots created in R. It would be disproportional in work to replicate exactly the minitab output, especially as PP / QQ plots are fairly casual inspections of normality (compared to a test, like Anderson-Darling).
+
+I've also included a QQ plot to cover my bases.
+
+```{r column of differences}
+SummaryStudentData$MeanDomNonDomDifference <- (SummaryStudentData$MeanDomTime - SummaryStudentData$MeanNonDomTime)
+```
+```{r probability plot - normality test of normality of differences}
+m <- mean(SummaryStudentData$MeanDomNonDomDifference)
+s <-sd(SummaryStudentData$MeanDomNonDomDifference)
+n <- nrow(SummaryStudentData)
+p <- (1: n) / n - 0.5 / n
+ggplot(SummaryStudentData) +
+  theme_minimal() +
+    geom_point(aes(x = p, y = sort(pnorm(MeanDomNonDomDifference, m, s)))) +
+  geom_abline(intercept = 0, slope = 1, color = "red") +
+  labs(title = "Probability Plot of Mean Dominant - Non Dominant Reaction Times") +
+  ylab("ECDF - Actual Proportion") +
+  xlab("TCDF - Theoretical Proportion")
+
+qqnorm(SummaryStudentData$MeanDomNonDomDifference, main = "Normal Q-Q PLot", xlab = "Theoretical Quantiles", ylab = "Sample Quantiles", datax = F)
+qqline(SummaryStudentData$MeanDomNonDomDifference, datax = F)
+```
+
+On the basis of these plots, it is highly plausible the distribution of the differences in mean reaction times are drawn from a normal distribution. The probability plot is fairly close to the normal line along the length of the data (from the minimal proportion of the ECDF and TCDF to the entire proportion of the ECDF and TCDF). 
+
+However, the QQ plot does show significant deviation in the tails. This is of course relative to a fairly low scale range - these points in the tails are only a fraction of a quantile away from a perfect normal distribution. The points are reasonable linear in the bulk of the data near the median, however, the nature of the tails (deviating in a consistent way at both ends) suggests there may be additional systemic variation - perhaps a t-distribution (with wider tails) would be a better fit?
+
+
+
+### c. Outliers on pplot / repeat of normality test
+
+The point that has class ID 115 (as described later in the assignment...), least matches what we would have expected if the population distribution of reaction time differences between dominant and non-dominant hands is normal. This is indicated by it's divergence from the 1-to-1 expected relationship of the sample quantiles and theoritical quantiles (i.e. where the data lies in the sample distribution versus the expected theoretical distribution).
+
+Looking the actual dataframe itself, this difference is clearly caused by the very large (and unsual!) difference between the low dominant hand reaction time and the higher non-dominant hand reaction time (and consequent large MeanDomNonDomDifference);
+
+```{r highlighting outlier}
+kable(SummaryStudentData[SummaryStudentData$ClassID == 115,],"html", row.names = T)  %>%
+  kable_styling(bootstrap_options = "striped", font_size = 8) %>%
+  column_spec(c(10:12), bold = T, color = "white", background = "#D7261E")
+```
+
+Repeating the PP / QQ plots, but excluding point 115;
+
+```{r repeat of PP QQ plots}
+SummaryStudentData_n115 <- SummaryStudentData[SummaryStudentData$ClassID != 115,]
+m <- mean(SummaryStudentData_n115$MeanDomNonDomDifference)
+s <-sd(SummaryStudentData_n115$MeanDomNonDomDifference)
+n <- nrow(SummaryStudentData_n115)
+p <- (1: n) / n - 0.5 / n
+ggplot(SummaryStudentData_n115) +
+  theme_minimal() +
+    geom_point(aes(x = p, y = sort(pnorm(MeanDomNonDomDifference, m, s)))) +
+  geom_abline(intercept = 0, slope = 1, color = "red") +
+  labs(title = "Probability Plot of Mean Dominant - Non Dominant Reaction Times (exc. ID 115)") +
+  ylab("ECDF - Actual Proportion") +
+  xlab("TCDF - Theoretical Proportion")
+
+qqnorm(SummaryStudentData_n115$MeanDomNonDomDifference, main = "Normal Q-Q PLot (exc ID 115)", xlab = "Theoretical Quantiles", ylab = "Sample Quantiles", datax = F)
+qqline(SummaryStudentData_n115$MeanDomNonDomDifference, datax = F)
+```
+
+Note the reduced range on y-axis of quantiles and the abscence of the point in the extreme bottom left hand corner. The divergence from the perfect normal distribution now looks larger, but this is an artifact of the reduced range on the plot scales.
+
+### d. Paired t-test (excluding ID 115)
+
+I have assumed equal variances, which may or may not be appropriate (but is not a consideration in this assignment).
+
+```{r paired t test}
+t.test(SummaryStudentData_n115$MeanDomTime,SummaryStudentData_n115$MeanNonDomTime, paired = T, var.equal = T)
+```
+
+The results of this paired t-test suggest it is highly plausible that there is no true difference in the population means of the reaction times of dominant vs non-dominant hands. We come to this decision when applying the conventional decision rule of p < 0.05 indicating a significant result. The meaning of this high (0.9) p-value is that, if we assume the null hypothesis is correct, it is highly likely that we would obtain the result (level of difference) we did in the clear majority of cases. Put another case, this result provides a lack of evidence to disprove the null hypothesis. 
+
+We can also be confident that, for our particular sample, the range of -0.2 to 0.18 contains the true population mean, such that in the very long run, in 95% of cases this would be correct (i.e. there is a 5% chance our confidence interval has completed missed the true population parameter and does not contain the true population paramter [mean]).
+
+This paired t-test was appropriate because each value we are computing the difference of is NOT independant of one another. This is because we are calculating the difference for the same person and as such we would expect the means of the dominant and non-dominant hands to have some relationship with one another for each class ID.
+
+### e. Two-sample t-test (excluding ID 115) for ME vs Other
+
+I've skipped creating an indicator variable by appropriately subsetting the data inside the t.test function (this is simple process - can easily do this if neccesary).
+
+I have again assumed equal variances here.
+
+```{r two sample t test}
+t.test(SummaryStudentData_n115[SummaryStudentData_n115$Speciality == "MECH",]$MeanDomTime,SummaryStudentData_n115[SummaryStudentData_n115$Speciality != "MECH",]$MeanDomTime, paired = F, var.equal = T)
+```
+
+Creating previous PP / QQ plots on the two subsets (MECH and non-MECH students);
+
+```{r PP QQ plots mech non-mech students n115}
+m <- mean(SummaryStudentData_n115[SummaryStudentData_n115$Speciality == "MECH",]$MeanDomTime)
+s <-sd(SummaryStudentData_n115[SummaryStudentData_n115$Speciality == "MECH",]$MeanDomTime)
+n <- nrow(SummaryStudentData_n115[SummaryStudentData_n115$Speciality == "MECH",])
+p <- (1: n) / n - 0.5 / n
+
+g_pp_mech_n115 <- ggplot(SummaryStudentData_n115[SummaryStudentData_n115$Speciality == "MECH",]) +
+  theme_minimal() +
+    geom_point(aes(x = p, y = sort(pnorm(MeanDomTime, m, s)))) +
+  geom_abline(intercept = 0, slope = 1, color = "red") +
+  labs(title = "Probability Plot of Mean Dominant Reaction Times", subtitle ="MECH (exc. ID 115)") +
+  ylab("ECDF - Actual Proportion") +
+  xlab("TCDF - Theoretical Proportion") 
+
+m1 <- mean(SummaryStudentData_n115[SummaryStudentData_n115$Speciality != "MECH",]$MeanDomTime)
+s1 <-sd(SummaryStudentData_n115[SummaryStudentData_n115$Speciality != "MECH",]$MeanDomTime)
+n1 <- nrow(SummaryStudentData_n115[SummaryStudentData_n115$Speciality != "MECH",])
+p1 <- (1: n1) / n1 - 0.5 / n1
+
+g_pp_nmech_n115 <- ggplot(SummaryStudentData_n115[SummaryStudentData_n115$Speciality != "MECH",]) +
+  theme_minimal() +
+    geom_point(aes(x = p1, y = sort(pnorm(MeanDomTime, m1, s1)))) +
+  geom_abline(intercept = 0, slope = 1, color = "red") +
+  labs(title = "Probability Plot of Mean Dominant Reaction Times",subtitle ="MECH (exc. ID 115)") +
+  ylab("ECDF - Actual Proportion") +
+  xlab("TCDF - Theoretical Proportion")
+
+grid.arrange(g_pp_nmech_n115,g_pp_mech_n115, ncol = 2)
+
+par(mfrow=c(1,2))
+qqnorm(SummaryStudentData_n115[SummaryStudentData_n115$Speciality == "MECH",]$MeanDomTime, main = "Normal Q-Q PLot - MECH (exc ID 115)", xlab = "Theoretical Quantiles", ylab = "Sample Quantiles", datax = F)
+qqline(SummaryStudentData_n115[SummaryStudentData_n115$Speciality == "MECH",]$MeanDomTime, datax = F)
+
+qqnorm(SummaryStudentData_n115[SummaryStudentData_n115$Speciality != "MECH",]$MeanDomTime, main = "Normal Q-Q PLot - Non MECH (exc ID 115)", xlab = "Theoretical Quantiles", ylab = "Sample Quantiles", datax = F)
+qqline(SummaryStudentData_n115[SummaryStudentData_n115$Speciality != "MECH",]$MeanDomTime, datax = F)
+```
+
+The results of this 2-sample t-test suggest it is highly plausible that there is no true difference in the population means of the reaction times of dominant hands between MECH and non-MECH students. We come to this decision when applying the conventional decision rule of p < 0.05 indicating a significant result. The meaning of this high (0.73) p-value is that, if we assume the null hypothesis is correct, it is highly likely that we would obtain the result (level of difference) we did in the clear majority of cases. Put another way, this result provides a lack of evidence to disprove the null hypothesis. 
+
+We can also be confident that, for our particular sample, the range of -0.77 to 0.54 (a significantly wider range than in the paired t-test, likely due to lower sample sizes and reduced power from independance of observations) contains the true population mean, such that in the very long run, in 95% of cases this would be correct (i.e. there is a 5% chance our confidence interval has completed missed the true population parameter and does not contain the true population paramter [mean]).
+
+### Optional Task: Investigate full data set
+
+There is a plethora of directions we could take this dataset, but I have just done some simple exploration.
+
+I have deleted case-wise every row where time is not recorded. We first get a rather intense looking line plot with far too much info on it. Even this provides some interesting info - clearly there are more extreme outliers closer to zero than closer to 25. The very general central tendency is also clear. The sharp "spikeness" at the bottom of the plot tends to suggest these outliers are not entire student runs, but rather individual drops.
+
+```{r all student data}
+AllStudentData2018 <- read.csv("AllStudentData2018.csv")
+AllStudentData2018$Time <- as.numeric(levels(AllStudentData2018$Time))[AllStudentData2018$Time]
+AllStudentData2018$Run <- as.numeric(levels(AllStudentData2018$Run))[AllStudentData2018$Run]
+#AllStudentData2018$Time[is.na(AllStudentData2018$Time)] <- 0
+AllStudentData2018 <-na.omit(AllStudentData2018) 
+
+ggplot(AllStudentData2018) +
+  theme_minimal() +
+  geom_line(mapping = aes(x = Run, y = Time, group = interaction(ClassID,Hand), color = Hand), size = 1, alpha = 0.05, na.rm = T) +
+  ggtitle("All Runs plotted against Time, grouped by student") +
+  ylab("Time (cs)") +
+  scale_color_manual(values = c("red","blue"))
+```
+
+If we smooth over a large proportion of students, we find two extra pieces of insight: that reaction times tend to start a bit higher and tend to drop off more towards the end of a run, with what looks like a small increase in reaction times for some students. However, this is very likely to be due to the nature of the smoothing (e.g. like the characteristic widening of confidence intervals at the beginning and end of the data for the regression).
+
+```{r plot of all runs}
+ggplot(AllStudentData2018) +
+  theme_minimal() +
+  geom_line(mapping = aes(x = Run, y = Time, group = interaction(ClassID,Hand), color = Hand), alpha = 0.2, size = 1, na.rm = T, se = F, stat = "smooth", method = "loess", span = 0.8) +
+  ggtitle("Runs plotted against Time, grouped by Student") +
+  ylab("Time (cs)") +
+  scale_color_manual(values = c("red","blue"))
+```
+```{r smoothed plot of all runs}
+ggplot(AllStudentData2018) +
+  theme_minimal() +
+  geom_line(mapping = aes(x = Run, y = Time, group = interaction(ClassID,Hand), color = Hand), alpha = 0.2, size = 1, na.rm = T, se = F, stat = "smooth", method = "loess", span = 0.8) +
+  ggtitle("Runs plotted against Time (LOESS, span = 0.8)") +
+  ylab("Time (cs)") +
+  scale_color_manual(values = c("red","blue"))
+```
+
+Plotting a 2d distribution reveals a bit more about the data's density;
+
+```{r 2d all Student data}
+ggplot(AllStudentData2018) +
+  theme_minimal() +
+  ylab("Time (cs)") +
+  xlab("Run") +
+  ggtitle("2d Distribution of Time against Run") +
+  geom_bin2d(mapping = aes(x = as.factor(Run), y = Time))
+```
+
+A series of faceted boxplots doesn't confirm anything, other than the existence of negative skew as denoted by the large number of outliers negative relative to the mean.
+
+```{r boxplots of time by hand and run no.}
+ggplot(AllStudentData2018) +
+  theme_minimal() +
+  geom_boxplot(mapping = aes(x = as.factor(Run), y = Time, group = interaction(as.factor(Run), Hand), fill = Hand), alpha = 0.2, position = "dodge") +
+  ggtitle("Boxplots of Run against Time") +
+  ylab("Time (cs)") +
+  scale_color_manual(values = c("red","blue"))
+```
+
+A basic (exploratory) plot of the linear regression over the points appears to confirm the lack of difference in which hand students used. There does appear to be a slight negative correlation of Run No. to Time, but confirm this would require a great deal more investigation. 
+
+```{r points and LM of time by hand and run no.}
+ggplot(AllStudentData2018) +
+  theme_minimal() +
+  geom_point(mapping = aes(x = as.numeric(Run), y = Time), alpha = 0.1) +
+    geom_smooth(mapping = aes(x = as.numeric(Run), y = Time),method = "lm") +
+  ggtitle("All Runs plotted against Time, grouped by Hand with Linear Regression added") +
+  ylab("Time (cs)") +
+    facet_wrap(~Hand)
+```
+
+If we really wanted to drill the data down, we could facet the plots by student ID. However, visual inspection of almost 120 plots is a suboptimal way to do things, so at this point, there would be a need to develop a routine to compare fitted models for each student and flag outliers.
+
+Rolling all data into various smoothers;
+```{r}
+ggplot(AllStudentData2018) +
+  theme_minimal() +
+  geom_smooth(mapping = aes(x = Run, y = Time, group = Hand, color = Hand), size = 1, alpha = 0.3, na.rm = T, method = "loess", span = 0.66) +
+  ggtitle("All Runs plotted against Time") +
+    labs(caption = "LOESS, span = 0.66") +
+  ylab("Time (cs)") +
+    scale_color_manual(values = c("red","blue")) -> g_run_loess
+ggplot(AllStudentData2018) +
+  theme_minimal() +
+  geom_smooth(mapping = aes(x = Run, y = Time, group = Hand, color = Hand), size = 1, alpha = 0.3, na.rm = T, method = "lm") +
+  ggtitle("All Runs plotted against Time") +
+    labs(caption = "Linear regression") +
+  ylab("Time (cs)") +
+    scale_color_manual(values = c("red","blue")) -> g_run_lm
+ggplot(AllStudentData2018) +
+  theme_minimal() +
+  geom_smooth(mapping = aes(x = Run, y = Time, group = Hand, color = Hand), size = 1, alpha = 0.3, na.rm = T, method = "lm", formula = y ~ poly(x, 2)) +
+  ggtitle("All Runs plotted against Time") +
+  ylab("Time (cs)") +
+    labs(caption = "Polynomial") +
+    scale_color_manual(values = c("red","blue")) -> g_run_poly
+ggplot(AllStudentData2018) +
+  theme_minimal() +
+  geom_smooth(mapping = aes(x = Run, y = Time, group = Hand, color = Hand), size = 1, alpha = 0.3, na.rm = T, method = "lm", formula = y ~ log(x)) +
+  ggtitle("All Runs plotted against Time") +
+    labs(caption = "Logrithmic") +
+  ylab("Time (cs)") +
+    scale_color_manual(values = c("red","blue")) -> g_run_log
+
+grid.arrange(g_run_loess,g_run_lm,g_run_poly,g_run_log, ncol = 2, nrow = 2)
+```
+

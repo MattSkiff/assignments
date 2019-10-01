@@ -1,0 +1,100 @@
+---
+title: 'Pet Lab Stage 3: Shaping'
+author: "Matthew Skiffington"
+date: "September 14, 2018"
+output: pdf_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Shaping
+
+We aimed in this stage to shape a target behaviour $B_1$ using the conditioned reinforcer ($S^{\char13}$) we established in step 2. We will support this conditioned reinforcer with the use of the optimal primary reinforcer $B^R$ which was identified in stage 1 (the preference assessment). We define $B_1$ as;
+
+ > $$B_1 := \text{turning in a complete circle}$$
+ 
+ 
+As the purpose of this exercise is to train the behaviour using shaping techniques, we avoided using luring or other techniques. As we encountered difficulties in our initial shaping, we revised the criteria for delivering the reinforcer.
+
+---
+
+### Question 1:
+
+*Make a plan with your group describing which behaviours you will be targeting as successive approximations to the target behaviour (B1). Identify the steps the trainer should take to shape your pet to achieve B1.*
+
+The plan was a series of successive approximations towards the target behaviour. These were conducted with two sets of criteria;
+
+### Criteria Set 1 (Day 1)
+
+\begin{enumerate}
+  \item Any movement at all by Murphy
+  \item Any movement of Murphy to the left (including head turns)
+  \item Movement past $90^o$ to the left of Murphy's head or body
+  \item Any movement \textit{approaching} $180^o$ of head or body
+  \item Any movement\textit{past} $180^o$ of head or body
+  \item Any complete turn
+\end{enumerate}
+
+Murphy's initial behaviour was to sit still in front of us, looking towards us, when we presented food. This is likely a result of thousands of reinforcements from the family of the dog contributing towards this behaviour. Hence, we attempted to shape this towards $B_1$ in the first criteria.  
+
+There were several issues with the first criteria. One was that by reinforcing Murphy while he was sitting, we were reinforcing that behaviour on-top of any turning movement of his head. Hence he was encountering physical difficulties in turning his head to a greater angle and was reluctant to stand up and turn (as the behaviour of standing up had been reinforced). 
+
+Secondly, despite attempting to keep the reinforcement schedule sufficiently rich, we found Murphy would become disinterested after a period of non-reinforcement. He would then lie on his side and not exhibit any more variability in behaviour. This was an issue that was likely due to the dogs previous feeding in the day (it was late afternoon at this point). This was also possibly due to the size of $S^R$ we were using; whole dog biscuits as opposed to biscuits split into pieces as recommended to us by our supervisor.
+
+We attempted to compensate for this by getting Murphy to run around, by leading him to different spots and then conducting the procedure. This did not help and likely diminished possible improvements from a behavioural theory point of view. After 1.5 hours of this, we gave up. Although this longer than the time period specified in the proposal, it is important to note several points;
+
+\begin{itemize}
+  \item Murphy was on his home property at this point.
+  \item Murphy had access to water nearby.
+  \item Murphy was not on a leash or being directly controlled in anyway.
+\end{itemize}
+
+On the second day we restricted the criteria such that we did not reinforce Murphy unless he was standing up. This relied on waiting for extinction of his previous sitting behaviour. We also split the biscuits into pieces so that we could keep the schedule richer and to prevent satiation. As he would get up to leave (which involved standing and turning) we reinforced him. This quickly lead (via successive approximations) to the desired behaviour.
+
+### Criteria Set 2 (Day 2)
+
+\begin{enumerate}
+  \item Any movement at all by Murphy, while he is \textit{standing}
+  \item Any movement of Murphy to the left, while he is \textit{standing}
+  \item Movement past $90^o$ to the left of Murphy's original position 
+  \item Any movement \textit{approaching} $180^o$ of Murphy's original position
+  \item Any movement \textit{past} $180^o$ of of Murphy's original position
+  \item Any complete turn
+\end{enumerate}
+
+I believe that also staying in one spot and limiting other stimuli aided the rapid progress made on Day 2. We only spent twenty minutes training, versus the 90 minutes spent on Day 1.
+
+### Question 2:
+
+*Discuss how the steps were executed. Identify any mistakes made by the trainer and the consequences of those mistakes.*
+
+The main structural mistake that occurred was a failure to create a narrow, approriate class of behaviour that could logically and physically lead to the desired behaviour. The first criteria was too loose and thus lead to physical limits (Murphy could not turn his head anymore and subsequent lack of reinforcement did not lead to variability in his standing motion). This was because we were attempting to *build on top of* instead of *extinguish* previously reinforcered behaviour. The consequence of this was insufficient progress - we had to end that training session and try again on Day 2, with the revised criteria.
+
+
+Lots of other minor mistakes occurred. Mostly, these occured on Day 1. These include;
+
+\begin{itemize}
+  \item Not reinforcing behaviour that was close to the behavioural criteria (often a result of a lack of manual dexterity with the clicker...)
+  \item Primary reinforcer being delivered in units that were too large and lead to satiation, interruption of the training
+  \item Extraneous stimuli introduced - e.g. moving around, getting Murphy 'excited', talking to Murphy
+  \item Interruptions to the training due to camera and battery issues
+  \item Failure to use a variable ratio of reinforcement (we generally only used a CRF schedule) - this occured on Day 2 as well
+\end{itemize}
+
+Despite this, the second day went very smoothly. This is because we;
+
+\begin{itemize}
+  \item Used small reinforcement units
+  \item Stayed in one spot, did not move, kept the same position (minimised other stimuli)
+  \item Trained Murphy for a brief period (he did not get tired or disinterested)
+  \item Minimised interruptions
+  \item Kept up a rich schedule of reinforcement
+  \item Critically, used a narrower class of criteria (Criteria Set 2) and waited for extinction of sitting behaviour
+\end{itemize}
+
+
+---
+

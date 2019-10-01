@@ -1,0 +1,263 @@
+---
+title: "Assignment 1 STAT521"
+author: "Matthew Skiffington"
+date: "19 March 2019"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+set.seed(1)
+library("Rcpp")
+```
+
+# STAT521 Assignment 1
+
+## Question 2
+
+a)
+
+```{r fisher scoring}
+y <- rnorm(50,4,(0.5^2))
+u_est_0 <- 4
+var_est_0 <- 0.5^2
+
+fisher_scoring <- function(u_est_0,var_est_0,y) {
+	sd_est_0 <- sqrt(var_est_0)
+	diff_sd = 999
+	diff_u = 999
+	i = 0
+	n <- length(y)
+	param_vec <- c(u_est_0,sd_est_0)
+	while(diff_u > (1*10^(-8)) | diff_sd > (1*10^(-8))) {
+	#while(TRUE) {
+		u_est_0 <- param_vec[1]
+		sd_est_0 <- param_vec[2]	
+		inverse_i <- -matrix(c((sd_est_0^2)/n,0,0,(sd_est_0^2)/(2*n)),nrow = 2)
+		#inverse_i <- -matrix(c((sd_est_0^2)/n,0,0,(2*(sd_est_0^4))/n),nrow = 2)
+		score_u <- (sum(y)-(n*u_est_0))/(sd_est_0^2) 
+		score_var <- (-n/sd_est_0) + (sum((y-u_est_0)^2)/(sd_est_0^3))
+		
+		score_vec <- c(score_u,score_var)
+		
+		param_vec <- param_vec-(score_vec%*%inverse_i) #updating
+		
+		diff_u <- u_est_0-param_vec[1]	
+		diff_sd <- sd_est_0-param_vec[2]	
+		
+		i = i + 1
+		
+		if (i == 1000) {
+			break()
+		}
+		diff_u <- u_est_0-param_vec[1]	
+		diff_sd <- sd_est_0-param_vec[2]
+	}
+	print(paste0("u est: ",param_vec[1]	))
+	print(paste0("var est: ",param_vec[2]^2	))
+	print(paste0("iterations: ",i))
+}
+
+fisher_scoring(u_est_0,var_est_0,y)
+```
+
+b)
+
+```{r fisher scoring with custom params}
+y <- rnorm(50,4,(0.5^2))
+u_est_0 <- -3
+var_est_0 <- 6
+
+fisher_scoring(u_est_0,var_est_0,y)
+```
+
+## Question 3
+
+1)
+
+```{r p-values}
+y <- rpois(50,lambda = 7)
+n <- length(y)
+mle_lambda <- sum(y)/n
+lambda_0 <- 7
+
+# Wald
+z  <- (sqrt(n)*(mle_lambda-lambda_0))/sqrt(mle_lambda);z
+p_wald <- 2*pnorm(abs(z), lower.tail = F);p_wald # two sided
+
+# LRT
+#-2*(log(lambda_0/mle_lambda)*sum(y)-n*(mle_lambda-lambda_0))
+chi_LRT <- 2*((n*mle_lambda + sum(y)*log(mle_lambda))-(n*lambda_0 + sum(y)*log(lambda_0)))
+p_chi_LRT <- pchisq(q = chi_LRT, df = 1,lower.tail = F);p_chi_LRT
+
+## using direct likelihood ratio test
+## using logged approximation wasn't working for me (probably incorrect derivation on paper)
+chi_LRT_unlogged <- ((lambda_0/mean(y))^(sum(y)))*exp(n*(mean(y)-lambda_0))
+p_chi_LRT_unlogged <- pchisq(q = chi_LRT_unlogged, df = 1,lower.tail = F);p_chi_LRT_unlogged
+#ref = http://www.stat.wisc.edu/courses/st312-rich/likratio.pdf
+
+# Score Test
+chi_score <- ((1/lambda_0)*sum(y)-n)*(lambda_0/n)*((1/lambda_0)*sum(y)-n)
+p_chi_score <- pchisq(q = chi_score, df = 1,lower.tail = F);p_chi_score
+
+```
+
+2)
+
+```{r log ratio ci}
+loglikelihood_possion <- function(y,lambda,n) {
+  (-n*lambda)+(sum(y)*log(lambda)) #-sum(log(factorial(y)))
+}
+
+g <- function(x) loglikelihood_possion(y = y,lambda = x,n = 50) + (qchisq(0.95,1)/2)
+pr <- seq(0,30,by = 1)
+plot(pr,loglikelihood_possion(y,pr,50),type="l",xlab="p",ylab="log-likelihood")
+abline(h=-qchisq(0.95,1)/2)
+abline(v = c(1.171447,22.25175))
+LL <- round(uniroot(g,lower = 0,upper = 10,extendInt = "yes")$root,4) #LL
+UL <- round(uniroot(g,lower = 10,upper = 20,extendInt = "yes")$root,4) #UL
+paste0("LRT Confidence Interval: ",LL," ",UL)
+```
+
+3)
+
+```{r wald ci}
+se <- sqrt(mle_lambda)/sqrt(n)
+cv <- qnorm(0.975)
+paste0("Wald Confidence Interval: ",round(mle_lambda-cv*se,4)," ",round(mle_lambda+cv*se,4))
+```
+
+## Question 4
+
+b)
+
+all()
+
+```{r all,eval = F}
+cppFunction('
+bool any_cpp(LogicalVector x) {
+	  int n = x.size();
+		bool b = false;
+		for(int i = 0; i < n; ++i) {
+			if (x[i])	{
+				b = true;
+			}
+			else {
+				b = false;
+				break;
+			}
+		}
+	return b;
+	}
+')
+any_cpp(c(FALSE,TRUE,TRUE))
+any_cpp(c(TRUE,TRUE,TRUE))
+```
+
+diff() 
+
+- implemented for vectors
+- catches lag > length(inputvector) 
+- catchs lag > 0
+
+```{r diff, eval = F}
+cppFunction('
+NumericVector diff_cpp(NumericVector x, int lag) {
+		int n = x.size();
+		if ((n - lag) < 0) {
+			throw std::invalid_argument( "lag must not be greater than length x");
+		}
+		if (lag < 0) {
+			throw std::invalid_argument( "lag must be greater 0");
+		}
+		if (n != lag) {
+			NumericVector d(n - lag);
+			int j = 0;
+			for (int i = 0; i < n; i++) {
+				if (i >= lag) {
+				d[j] = x[i] - x[j];
+				j++;
+				}
+			}
+			return d;
+		}
+		else {
+			NumericVector d(1);
+			return d;
+		}
+}
+')
+t <- try(diff_cpp(c(1,3,5,7,9),6))
+print(t[1])
+t <- try(diff_cpp(c(1,3,5,7,9),-1))
+print(t[1])
+diff_cpp(c(1,3,5,7,9),1)
+diff_cpp(c(1,3,5,7,9),2)
+diff_cpp(c(1,3,5,7,9),5)
+```
+
+var() 
+
+- implemented for vectors
+- only naive algorithm (introduction of precision errors)
+
+```{r var, eval = F}
+cppFunction('
+double var_cpp(NumericVector x) {
+	int n = x.size();
+	double sum_x = 0;
+	double sum_x2 = 0;
+	double var = 0;
+		for (int i = 0; i < n; i++) {
+			sum_x += x[i];		
+		}
+		for (int i = 0; i < n; i++) {
+			sum_x2 += x[i]*x[i];		
+		}
+	var = ((sum_x2/n)-pow((sum_x/n),2))*(n/(n-1));
+	return var;
+	}
+')
+var_cpp(c(3,4))
+var(c(3,4))
+var_cpp(rnorm(10000,0,1))
+var(rnorm(10000,0,1))
+```
+
+## Question 5
+
+a)
+
+```{r ignore, eval = F}
+cppFunction('
+double mean_cpp(NumericVector x,bool ignore_rm) {
+	int n = x.size();
+	int j = 0;
+	double sum_x = 0;
+	double mean = 0;
+	if (!ignore_rm) {
+		for (int i = 0; i < n; i++) {
+			sum_x += x[i];		
+		}
+	}
+	else {
+		for (int i = 0; i < n; i++) {
+			if (NumericVector::is_na(x[i])) {
+				j ++;
+			}
+			else {
+			sum_x += x[i];	
+			}
+		}
+	}
+	mean = sum_x/(n-j);
+	return mean;
+	}
+')
+mean_cpp(c(1,2,3,NA),T)
+mean_cpp(c(1,2,3,NA),F)
+mean_cpp(c(1,2,3),T)
+mean_cpp(c(1,2,3),F)
+```

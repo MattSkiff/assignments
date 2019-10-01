@@ -1,0 +1,595 @@
+---
+title: 'STAT521: Assignment 4'
+author: 
+- "Matthew Skiffington"
+- "The University of Waikato"
+subtitle: "Nonparametric Methods and Generalised Additive Models"
+date: "05 June 2019"
+output: 
+  html_document: 
+  theme: yeti
+  highlight: espresso
+---
+
+```{r setup, include=FALSE}
+library(faraway)
+library(sm)
+library(plotly)
+library(ggplot2)
+library(gridExtra)
+library(mgcv) 
+knitr::opts_chunk$set(echo = TRUE, warning = F, message = F,cache = T) 
+set.seed(1)
+```
+
+Preface: these questions were adapted by Dr. Steven Miller from Faraway (2016). Many of the answers use code derived from this textbook, or from other sources.
+
+# Question 1
+
+---
+
+## Chapter 11 (2016): Nonparametric Regression
+
+---
+
+### Make plots of the data, and comment
+
+#### Produce a scatterplot of lweight versus age [1]
+
+```{r q1 a}
+data(prostate)
+
+#xyplot(data = prostate, lweight ~ age, main = "Prostate: log (prostate weight) vs age of patient", xlab = "") - lattice
+p <- plot_ly(prostate, x = ~age, y = ~lweight, 
+						 marker = list(size = 5,
+                       color = 'rgba(255, 182, 193, .9)',
+                       line = list(color = 'rgba(152, 0, 0, .8)',
+                                   width = 1),opacity = 0.5)) %>%
+  layout(title = 'Prostate: log (prostate weight) vs age of patient',
+         yaxis = list(zeroline = FALSE,
+         						 title = "log (prostate weight)"),
+         xaxis = list(zeroline = FALSE),
+  			 							title = "age (years)") %>% 
+	config(displayModeBar = F)
+```
+
+#### Fit a curve using kernel methods, plotting the fit on top of the data. You should use a normal kernel, and choose the bandwidth viayour own implementation of cross (you will need to use an optimisation function, such as optimise()). What is the effect of the outlier on this smoother? [4]
+
+Two implementations are written below. One that manually optimises using a very straightforward bruteforce search (I would prefer the function to reduce the step size once a minimum change in error is reached, but we are keeping things simple). The second uses the optimise function built into R.
+
+~~~The second method actually produced highly inconsistent results. Adjusting the upper bound of the search interval produced considerably different estimates. My own manual adjusting (and plotting), showed a tight (low) bandwidth of lambda =< 0.6 minimised error (as can be seen below, banwidths of less than 0.6 result in identical fit). The only use of optimise() that found the global CV error minimum (12.36312) was when bandwidth was already restricted to an interval near this range, hence, we can spectulate that the function may be "overshooting" local minima.~~~ Allowing the optimiser a reasonable range of bandwidths (0,100), produced a reasonable estimate of bandwidth via the first cross-validation implementation (gcv_ksmooth) with the need for brute force (gcv_ksmooth_optim).
+
+The first method (gcv_ksmooth) produces the expected curve with low bandiwth. A graph of the errror vs bandwidth is shown. The CV used is simple "leave one out CV" (LOOCV). It is certainly possible to use a more generalised version of CV (k-fold CV), might produce a more reasonable fit. Indeed, we can see quite a clear overfitting result at low bandwidths, followed by a more reasonable response of bandwidth and error, from which we might suggest a bandwidth of 13. 
+
+We then repeat this process with the outlier removed. We see that the discontinuity of the change in error at low bandwidth remains, but we also see a major improvement in the minimum LOOCV error, down to ~8.5 from a previous minimum around ~13. This suggests this single data point caused a considerable loss in fit. We see that visually, there is not a great deal of difference in the fit, with or without interpolation.
+
+For reference, we plot both datasets with a more reasonable bandwidth (by ignoring this discontinuity). However, simply by visual examination we can clearly tell this is far too rough. It's possible we would achieve a smoother fit by predicting on more points (i.e. not predict only on the given x points but also interpolating) with the N-W smoother, and this is demonstrated.
+
+It's worth noting this overfitting at low bandwidths occur because we did not penalise cases where the NW estimator is unable to predict a value, due to a lack of data within the bandwidth. For example, we are unable to apply this interpolation technique to visualise very low bandwidths, as the vast majority of interpolated values are unable to be estimated.
+
+
+```{r q1 b}
+plot(lweight ~ age,data = prostate, main = "NW estimator: similarity of low bandwidths (fitted on original data)")
+lines(ksmooth(y = prostate$lweight,x = prostate$age,n.points = length(prostate$age),x.points = prostate$age,"normal",0.1)$y,col = 'red')
+lines(ksmooth(y = prostate$lweight,x = prostate$age,n.points = length(prostate$age),x.points = prostate$age,"normal",0.2)$y,col = 'red')
+lines(ksmooth(y = prostate$lweight,x = prostate$age,n.points = length(prostate$age),x.points = prostate$age,"normal",0.3)$y,col = 'red')
+lines(ksmooth(y = prostate$lweight,x = prostate$age,n.points = length(prostate$age),x.points = prostate$age,"normal",0.4)$y,col = 'red')
+lines(ksmooth(y = prostate$lweight,x = prostate$age,n.points = length(prostate$age),x.points = prostate$age,"normal",0.5)$y,col = 'red')
+lines(ksmooth(y = prostate$lweight,x = prostate$age,n.points = length(prostate$age),x.points = prostate$age,"normal",0.6)$y,col = 'red')
+
+sum(ksmooth(y = prostate$lweight,x = prostate$age,n.points = length(prostate$age),x.points = prostate$age,"normal",0.2)$y)
+sum(ksmooth(y = prostate$lweight,x = prostate$age,n.points = length(prostate$age),x.points = prostate$age,"normal",0.4)$y)
+sum(ksmooth(y = prostate$lweight,x = prostate$age,n.points = length(prostate$age),x.points = prostate$age,"normal",0.6)$y)
+
+gcv_ksmooth <- function(lambda,x_vec,y_vec) {	
+				error_i <- 0
+				error_vec <- c()
+				for (i in 1:length(x_vec)) {
+					error_j <- (ksmooth(x = x_vec[-i],y = y_vec[-i],n.points = 1,x.points = x_vec[i],range.x = range(x_vec),
+												 						#range.x = c(min(x_vec)*max_extrap,max(x_vec)*max_extrap),
+																		kernel = "normal",bandwidth = lambda)$y - y_vec[i])^2
+					if (!is.na(error_j)) {
+						error_i <- error_i + error_j
+						error_vec <- c(error_vec,error_i)
+					}
+				}
+					if (length(error_vec) == 0) {
+						lambda_error_2 <- Inf
+					} else {
+						lambda_error_2 <- sum(error_vec/length(error_vec)) # average error
+					}
+				return(lambda_error_2)
+}
+
+# function takes in ksmooth, calculate CV error, then iterates using a linear search 
+# manually optimising (without reducing step size)
+gcv_ksmooth_optim <- function(step = 0.01,x_vec,y_vec,upper_limit = 10) {#min_error_change = 0.01) {
+			lambda_i <- 0
+			error_best <- Inf
+			lambda_error_vec <- c()
+			#i <- 0
+			#error_change <- Inf
+			#while (error_change > min_error_change) {
+			lambda_i_vec <- c()
+			while (lambda_i <= upper_limit-step) {
+				#i <- i + 1
+				#name <- paste('lambda', i,'plot.png', sep='_')
+				#png(name)
+				#plot(y_vec ~ x_vec, main = "GIF of CrossValidation select of best \n Normal Nadaraya-Watson Kernel Estimate",
+				#	 ylab = "log (prostate weight)",xlab = "Age")
+				lambda_i <- lambda_i + step # stepping through bandwidth
+				error_i <- 0
+				lambda_error <- Inf
+				error_vec <- c()
+				for (i in 1:length(x_vec)) {
+					error_j <- (ksmooth(x = x_vec[-i],
+																		y = y_vec[-i],
+																		n.points = 1,
+																		x.points = x_vec[i], 
+												 						#range.x = c(min(x_vec)*max_extrap,max(x_vec)*max_extrap),
+																		kernel = "normal",
+														 				bandwidth = lambda_i)$y - y_vec[i])^2
+					if (!is.na(error_j)) {
+						error_i <- error_i + error_j
+						error_vec <- c(error_vec,error_i)
+					}
+				}
+				#lines(ksmooth(y = y_vec,x = x_vec,n.points = length(x_vec),x.points = x_vec,"normal",lambda_i)$y,col = 'black')
+				#dev.off()
+					if (length(error_vec) != 0) {
+						lambda_error <- sum(error_vec/length(error_vec)) # average error
+					}
+				lambda_error_vec <- c(lambda_error_vec,lambda_error)
+				lambda_i_vec <- c(lambda_i_vec,lambda_i)
+				#error_change = lambda_error_1 / lambda_error_2
+				if (lambda_error < error_best) {
+					lambda_f <- lambda_i
+					error_best <- lambda_error
+				}
+			}
+			#name <- paste('lambda', 9999,'plot.png', sep='_')
+			#png(name)
+			#plot(y_vec ~ x_vec, main = "GIF of CrossValidation select of best \n Normal Nadaraya-Watson Kernel Estimate",
+			#		 ylab = "log (prostate weight)",xlab = "Age")
+			#lines(ksmooth(y = y_vec,x = x_vec,n.points = length(x_vec),x.points = x_vec,"normal",lambda_f)$y,col = 'red')
+			#dev.off()
+			return(list('final_lambda' = lambda_f,'fitted_y' = ksmooth(x = x_vec,
+																			y = y_vec,
+																			n.points = length(x_vec),
+																			x.points = x_vec, 
+													 						#range.x = c(min(x_vec)*max_extrap,max(x_vec)*max_extrap),
+																			kernel = "normal",
+															 				bandwidth = lambda_f)$y,'cv_errors' = lambda_error_vec,'lambdas' = lambda_i_vec))
+}
+
+x_vec <- prostate$age
+y_vec <- prostate$lweight
+
+paste("Optimal Bandwidth selection via optimise: ",optimise(f = gcv_ksmooth,interval = c(0,100),x_vec = prostate$age,y_vec = prostate$lweight,maximum = F,tol = 9)$minimum)
+
+paste("Optimal LOOCV via optimise:  ",optimise(f = gcv_ksmooth,interval = c(0,100),x_vec = prostate$age,y_vec = prostate$lweight,maximum = F,tol = 9)$objective)
+
+cv_best.list.99 <- gcv_ksmooth_optim(x_vec = x_vec,y_vec = y_vec,upper_limit = 99)
+
+par(mfrow = c(2,2))
+plot(cv_best.list.99$lambdas,cv_best.list.99$cv_errors,main = "CV Error vs Bandwidth",ylab = "CV Error (LOOCV)",xlab = "Bandwidth",type = 'l',sub = "Bandwidth < 100")
+plot(cv_best.list.99$lambdas[1:2000],cv_best.list.99$cv_errors[1:2000],main = "CV Error vs Bandwidth",ylab = "CV Error (LOOCV)",xlab = "Bandwidth",type = 'l',lwd = 2,sub = "Bandwidth < 20")
+plot(cv_best.list.99$lambdas[1:500],cv_best.list.99$cv_errors[1:500],main = "CV Error vs Bandwidth",ylab = "CV Error (LOOCV)",xlab = "Bandwidth",type = 'l',lwd = 2,sub = "Bandwidth < 5")
+
+pred.df <- as.data.frame(list(prostate$age,cv_best.list.99$fitted_y,prostate$lweight))
+colnames(pred.df) <- c("Age","Pred_lweight","lweight")
+
+which(y_vec > 5) # identifying outlier
+
+x_vec_nout <- prostate$age[-32]
+y_vec_nout <- prostate$lweight[-32]
+
+optimise(f = gcv_ksmooth,interval = c(0,100),x_vec = x_vec_nout,y_vec = y_vec_nout,
+				 maximum = F,tol = 9)
+
+cv_best.list.99.no <- gcv_ksmooth_optim(x_vec = x_vec_nout,y_vec = y_vec_nout,upper_limit = 99)
+
+par(mfrow = c(1,3))
+plot(cv_best.list.99.no$lambdas,cv_best.list.99.no$cv_errors,
+		 main = "CV Error vs Bandwidth",ylab = "CV Error (LOOCV)",
+		 xlab = "Bandwidth",type = 'l',sub = "Bandwidth < 1000 | Outlier removed")
+plot(cv_best.list.99.no$lambdas[1:2000],cv_best.list.99.no$cv_errors[1:2000],
+		 main = "CV Error vs Bandwidth",ylab = "CV Error (LOOCV)",
+		 xlab = "Bandwidth",type = 'l',lwd = 2,sub = "Bandwidth < 20 | Outlier removed")
+plot(cv_best.list.99.no$lambdas[1:500],cv_best.list.99.no$cv_errors[1:500],
+		 main = "CV Error vs Bandwidth",ylab = "CV Error (LOOCV)",
+		 xlab = "Bandwidth",type = 'l',lwd = 2,sub = "Bandwidth < 5 | Outlier removed")
+
+pred.no.df <- as.data.frame(list(prostate$age[-32],cv_best.list.99.no$fitted_y,prostate$lweight[-32]))
+colnames(pred.no.df) <- c("Age","Pred_lweight","lweight")
+
+g1 <- ggplot(data = pred.df) +
+    geom_point(mapping = aes(x = Age,y= lweight)) +
+    geom_line(mapping = aes(x = Age,y = Pred_lweight),col = 'red') + 
+    theme_classic() +
+    labs(title = "Age vs log (prostate weight)",subtitle = "F = 0.01",y = "log (prostate weight)", x = "Age")
+
+g2 <- ggplot(data = pred.no.df) +
+    geom_point(mapping = aes(x = Age,y= lweight)) +
+    geom_line(mapping = aes(x = Age,y = Pred_lweight),col = 'red') + 
+    theme_classic() +
+    labs(title = "Age vs log (prostate weight)",subtitle = "F = 0.01",y = "log (prostate weight)", x = "Age", caption = "Outlier removed")
+grid.arrange(g1, g2, ncol = 2)
+
+min(cv_best.list.99$cv_errors)
+min(cv_best.list.99.no$cv_errors)
+
+# ignoring initial overfit
+min(cv_best.list.99$cv_errors[100:9900])
+min(cv_best.list.99.no$cv_errors[100:9900])
+
+# selecting lambdas
+median(cv_best.list.99$lambdas[which(cv_best.list.99$cv_errors < 12.78740 & cv_best.list.99$cv_errors > 12.78738)])
+
+median(cv_best.list.99.no$lambdas[which(cv_best.list.99.no$cv_errors < 8.407509 & cv_best.list.99.no$cv_errors > 8.407507)])
+
+pred.df <- cbind(pred.df,'best_fit' = ksmooth(pred.df$Age,pred.df$lweight,kernel = "normal",bandwidth = 14.57,x.points = pred.df$Age)$y)
+
+pred.no.df <- cbind(pred.no.df,'best_fit' = ksmooth(pred.no.df$Age,pred.no.df$lweight,kernel = "normal",bandwidth = 14.57,x.points = pred.no.df$Age)$y)
+
+g1 <- ggplot(data = pred.df) +
+    geom_point(mapping = aes(x = Age,y= lweight)) +
+    geom_line(mapping = aes(x = Age,y = best_fit),col = 'red') + 
+    theme_classic() +
+    labs(title = "Age vs log (prostate weight)",subtitle = "N-W normal smooth | F = 13.97",y = "log (prostate weight)", x = "Age", caption = "Reasonable minimum selected")
+
+g2 <- ggplot(data = pred.no.df) +
+    geom_point(mapping = aes(x = Age,y= lweight)) +
+    geom_line(mapping = aes(x = Age,y = best_fit),col = 'red') + 
+    theme_classic() +
+    labs(title = "Age vs log (prostate weight)",subtitle = "N-W normal smooth | F = 14.57",y = "log (prostate weight)", x = "Age",caption = "Outlier removed | Reasonable minimum selected ")
+grid.arrange(g1, g2, ncol = 2)
+
+smooth_data <- ksmooth(x = pred.df$Age,y = pred.df$lweight,n.points = 600,range.x = range(pred.df$Age),kernel = "normal",bandwidth = 14.57)$y
+smooth_data.df <- as.data.frame(smooth_data);colnames(smooth_data.df) <- "smooth_y"
+smooth_data.df$x <- seq(from = 41, to = 79, length.out = 600)
+
+overfit_data <- ksmooth(x = pred.df$Age,y = pred.df$lweight,n.points = 600,range.x = range(pred.df$Age),kernel = "normal",bandwidth = 0.01)$y
+overfit_data.df <- as.data.frame(overfit_data);colnames(overfit_data.df) <- "overfit_y"
+overfit_data.df$x <- seq(from = 41, to = 79, length.out = 600)
+# rm(overfit_data,overfit_data.df)
+
+smooth_data_no <- ksmooth(x = pred.no.df$Age,y = pred.no.df$lweight,n.points = 600,range.x = range(pred.no.df$Age),kernel = "normal",bandwidth = 14.57)$y
+smooth_data_no.df <- as.data.frame(smooth_data_no);colnames(smooth_data_no.df) <- "smooth_y"
+smooth_data_no.df$x <- seq(from = 41, to = 79, length.out = 600)
+
+g1 <- ggplot(data = pred.df) +
+    geom_point(mapping = aes(x = Age,y= lweight)) +
+    geom_line(data = smooth_data.df,mapping = aes(x = x,y = smooth_y),col = 'red') + 
+    theme_classic() +
+    labs(title = "Age vs log (prostate weight)",subtitle = "N-W normal smooth | F = 13.97",y = "log (prostate weight)", x = "Age", caption = "Reasonable minimum selected \n Interpolated smooth")
+
+g2 <- ggplot(data = pred.no.df) +
+    geom_point(mapping = aes(x = Age,y= lweight)) +
+    geom_line(data = smooth_data_no.df,mapping = aes(x = x,y = smooth_y),col = 'red') + 
+    theme_classic() +
+    labs(title = "Age vs log (prostate weight)",subtitle = "N-W normal smooth | F = 14.57",y = "log (prostate weight)", x = "Age", caption = "Outlier removed | Reasonable minimum selected \n Interpolated smooth")
+
+grid.arrange(g1, g2 ,ncol = 2)
+```
+
+#### Compute the smoothing spline fit with the default amount of smoothing and overlay this on your plot. Describe the curve that has been fit to the data.[2]
+
+The curve is almost completely linear, showing little curvature. It is difficult to compare the error reported by the smoothing function with the (non-GCV) error reported by the function in Q1 b. However, the curves are broadly similar, with the difference mostly at the edges of the data, where the more limited pool of data from which to calculate the smooth has produced divergent effects. This follows logically, as both smooths are calculated using CV (NW using LOOCV and splines using GCV).
+
+It is interesting to note that on calculating the smooth via LOOCV, a warning message informs us that CV with non-unique x values is not recommended. This probably suggests that we should view our NW smooth with extra skepticism.  
+
+Note: interpolating the smooth spline made no difference to the shape of the final fit.
+
+```{r q1 c}
+smoother <- smooth.spline(x = prostate$age,y = prostate$lweight)
+smoother
+pred.df$smoothing_splines <- predict(smoother,prostate$age)$y
+smooth_data.df$smoothing_splines <- predict(smoother,smooth_data.df$x)$y
+
+
+ggplot(data = pred.df) +
+    geom_point(mapping = aes(x = Age, y = lweight)) +
+    geom_line(data = smooth_data.df,mapping = aes(x = x,y = smooth_y,colour = 'N-W (BW = 14)')) + 
+    geom_line(data = smooth_data.df, mapping = aes(x = x, y = smoothing_splines,colour = 'Smoothing Spline')) +
+		geom_line(mapping = aes(x = Age, y = smoothing_splines,colour = 'orange')) +
+    theme_classic() +
+    labs(title = "Age vs log (prostate weight)",y = "log (prostate weight)", x = "Age", subtitle = "Smooths added (Nadaraya-Watson, Smoothing Splines)",caption = "For N-W, a reasonable minimum selected, smooth interpolated (n = 600)") +
+    scale_y_continuous(limits = c(2,6.5)) +
+    scale_colour_manual("Smooths", breaks = c("N-W (BW = 14)", "Smoothing Spline"),
+                        values = c("red", "orange",'orange'))
+```
+
+#### Fit a LOWESS curve with a 95% confidence band (you can follow the example with ggplot() from the 2nd edition of Faraway, or create your own plot). Do you think a linear fit is plausible for this data? [3]
+
+Quite a few warnings were generated, as there are many similar age values in the data, which complicates the smoothing process (as age is behaving partially like a factor - [source](https://stackoverflow.com/questions/38948553/jittering-effects-on-loess). Unfortunately, in order to fully understand these difficults and whether jittering is an appropriate response, we would need to delve into the LOWESS algorithm (not described in detail by faraway). However, as a visualisation aid, using a neglible amount of jitter could be an appropriate response for this. As the curves are able to be fit here, we will move past this without worrying too much.
+
+More detail [here](https://community.rstudio.com/t/r-warnings-simpleloess-pseudoinverse-etc/8651/2) and original FORTRAN code used by R (!) [here](https://github.com/wch/r-source/blob/af7f52f70101960861e5d995d3a4bec010bc89e6/src/library/stats/src/loessf.f#L384-L386).
+
+A linear (straight line) fit does not seems entirely plausible, given that the regression shows a fair amount of curvature even when span = 0.99. However, it is worth noting that the confidence bounds (default 95%) shown about the smooth easily would allow for a range of linear fits. If the true function of the relation between age and log (prostate weight) is indeed non-linear, it will likely be relatively close to a linear fit (perhaps a weakly exponential function). The non-linearity showns with span = 0.33 certainly doesn't seem plausible.
+
+We might, on the basis of background knowledge about the dataset, expect the cancer in older men to be more advanced (purely due to their age) and therefore the prostates that are to be removed to be slightly heavier. We could also reason that cancer symptoms are less likely to be caught in 'younger' men (relatively speaking, i.e. 40-50) due to reduced screening probabilities and perhaps as their otherwise good health might mask the symptoms for sometime. On the flip side, we might expect older men to recieve more regular health checkups and have their cancer caught earlier. Ultimately, this is speculation on the basis on the two variables we are considering alone and, without bringing in an analysis of the rest of the data present in the set (or without doing a literature review), it is difficult to comment on the likelihood of these ideas.
+
+```{r q1 d}
+table(prostate$age)
+
+# code directly from faraway
+g1 <- ggplot(prostate, aes(x=age,y=lweight)) + 
+	geom_point(alpha=0.25) + 
+	geom_smooth(method="loess", span=0.99,aes(fill = '0.99',colour = "0.99")) +
+	theme_classic() +
+   labs(title = "Age vs log (prostate weight)",y = "log (prostate weight)",x = "Age", subtitle = "Lowess smooths fitted") +
+	scale_fill_manual("Smooth Span", breaks = c("0.99"), values = c("red")) +
+	scale_colour_manual("Smooth Span", breaks = c("0.99"), values = c("firebrick"))
+
+g2 <- ggplot(prostate, aes(x=age,y=lweight)) + 
+	geom_point(alpha=0.25) + 
+	geom_smooth(method="loess", span=0.66,aes(fill = '0.66',colour = "0.66")) +
+	theme_classic() +
+   labs(title = "Age vs log (prostate weight)",y = "log (prostate weight)",x = "Age", subtitle = "Lowess smooths fitted") +
+	scale_fill_manual("Smooth Span", breaks = c("0.66"),  values = c("orange")) +
+	scale_colour_manual("Smooth Span", breaks = c("0.66"),  values = c("chocolate4"))
+
+g3 <- ggplot(prostate, aes(x=age,y=lweight)) + 
+	geom_point(alpha=0.25) + 
+	geom_smooth(method="loess", span=0.33,aes(fill = '0.33',colour = "0.33")) +
+	theme_classic() +
+   labs(title = "Age vs log (prostate weight)",y = "log (prostate weight)",x = "Age", subtitle = "Lowess smooths fitted") +
+	scale_fill_manual("Smooth Span", breaks = c("0.33"),values = c('yellow')) +
+	scale_colour_manual("Smooth Span", breaks = c("0.33"),values = c('gold4'))
+
+g4 <- ggplot(prostate, aes(x=age,y=lweight)) + 
+	geom_point(alpha=0.25) + 
+	geom_smooth(method="loess", span=0.2,aes(fill = '0.1',colour = '0.1')) +
+	theme_classic() +
+   labs(title = "Age vs log (prostate weight)",y = "log (prostate weight)",x = "Age",subtitle = "Lowess smooths fitted") +
+	scale_fill_manual("Smooth Span", breaks = c("0.1"), values = c("blue")) +
+	scale_colour_manual("Smooth Span", breaks = c("0.1"), values = c("darkblue"))
+grid.arrange(g1,g2,g3,g4,ncol = 2,nrow = 2)
+	
+```
+
+#### Compare all three of the fits (kernel, smoothing spline, and loess). 
+
+Occam's razor seems like a guiding principle here. The smoothing spline fit is feasible via the LOWESS confidence bounds, and is not dissimilar from the NW smoothing fit, with the exception of not being affected unduly by the lack of data at the tails. Hence, from all three methods, the smoothing splines fit bes represents the relationship between log (prostate weight) and age. The LOWESS fits with smaller spans can be mostly discounted due to unusual roughness that appears to be overfitting, the LOWESS (span = 0.99) fit appears to mimic the NW fit and the LOWESS (span = 0.66) fit appears to be highly compatible with the preferred smoothing spline approach (i.e. it is relatively similar to a linear fit).
+
+#### Introduce lpsa as a second predictor and show the bivariate fit to the data using smoothing splines. 
+
+As shown below, there appears to be no interaction between the terms, and a directly linear relationship on both variables.
+
+```{r q1 f}
+library(mgcv)
+amod <- gam(lweight ~ s(age,lpsa), data=prostate)
+
+vis.gam(amod, color = "topo", ticktype="detailed",theta=-30,phi = 30,n.grid = 60, main = "Bivariate fit of log (prostate weight) \n with Age and log (prostate specific antigen)",zlab = "log-pw",xlab = "Age",ylab = "log-psa")
+vis.gam(amod, color = "topo", ticktype="simple",theta=0,phi = 0,n.grid = 60, main = "Bivariate fit of log (prostate weight) \n with Age and log (prostate specific antigen)",zlab = "log-pw",xlab = "Age",ylab = "log-psa")
+vis.gam(amod, color = "topo", ticktype="simple",theta=90,phi = 0,n.grid = 60, main = "Bivariate fit of log (prostate weight) \n with Age and log (prostate specific antigen)",zlab = "log-pw",xlab = "Age",ylab = "log-psa")
+
+vis.gam(amod,ticktype="detailed",theta=-30,phi = 30,n.grid = 60, main = "Bivariate fit of log (prostate weight) \n with Age and log (prostate specific antigen)",zlab = "log-pw",xlab = "Age",ylab = "log-psa", se = 5)
+vis.gam(amod, ticktype="simple",theta=0,phi = 0,n.grid = 60, main = "Bivariate fit of log (prostate weight) \n with Age and log (prostate specific antigen)",zlab = "log-pw",xlab = "Age",ylab = "log-psa",se = 5)
+vis.gam(amod, ticktype="simple",theta=90,phi = 0,n.grid = 60, main = "Bivariate fit of log (prostate weight) \n with Age and log (prostate specific antigen)",zlab = "log-pw",xlab = "Age",ylab = "log-psa", se = 5)
+```
+
+# Question 2
+
+---
+
+## Chapter 12 (2016) :Additive Models
+
+---
+
+#### Build a generalised additive model using the gam() function from the mgcv package with nondocco as the response, specifying a Poisson distribution for family, and allowing for overdispersion with the scale argument. Include the binary variables sex, freepoor, freerepa, chcond1 and chcond2, as well as the quadratic term agesq, as they are.  Include smooth terms for age, income, illness, actdays, hscore, prescribe, and nonpresc. Note: the model has difficulty with some of these variables, so set the number of knots for the illness, prescribe and nonpresc variables to be 6 using the argument k in the s() function.  Which of the variables in this model seem insignificant? 
+
+The variables agesq, chcond1, freepoor,age,income,nonpresc seem insignificant. freerepa is borderline. The documentation for GAM selection recommends maximum likelihood smoothness selection if p-values are to be used to aid variable selection.
+
+```{r q2 a}
+nondocco_gam <- gam(nondocco ~ 
+								 sex+freepoor+freerepa+chcond1+chcond2+agesq+
+								 s(age)+s(income)+s(illness, k = 6)+s(actdays)+s(hscore)+s(prescrib, k = 6)+s(nonpresc, k = 6),
+								 data= dvisits,family = "poisson",scale = -1,method = "ML")
+summary(nondocco_gam)
+```
+
+#### Fit a reduced model by:
+
+A quick search brings up a [discussion](https://stat.ethz.ch/pipermail/r-sig-ecology/2011-September/002405.html) that suggests using diagnostics plots as opposed to backward elmination to avoid introducing bias into coefficient estimation. The [documentation](https://www.rdocumentation.org/packages/mgcv/versions/1.8-28/topics/step.gam) for step.gam also suggests using GCV, AIC, Mallow's Cp or likelihood based approaches. However, as requested, manual backward elimination will be performend. In fairness, the [documentation](https://stat.ethz.ch/R-manual/R-devel/library/mgcv/html/gam.selection.html) for gam.selection states:
+
+>It is perfectly possible to perform backwards selection using p-values in the usual way: that is by sequentially dropping the single term with the highest non-significant p-value from the model and re-fitting, until all terms are significant.
+
+##### using backward elimination to remove insignificant parametric terms;
+
+Using backward elimination, agesq and freepoor were removed from the model.
+
+```{r q2 b i}
+nondocco_gam_1 <- gam(nondocco ~ 
+                     sex+freepoor+freerepa+chcond1+chcond2+
+                     s(age)+s(income)+s(illness, k = 6)+s(actdays)+s(hscore)+s(prescrib, k = 6)+s(nonpresc, k = 6),
+                 data= dvisits,family = "poisson",scale = -1,method = "ML")
+summary(nondocco_gam_1)
+
+nondocco_gam_2 <- gam(nondocco ~ 
+                     sex+freerepa+chcond1+chcond2+
+                     s(age)+s(income)+s(illness, k = 6)+s(actdays)+s(hscore)+s(prescrib, k = 6)+s(nonpresc, k = 6),
+                 data= dvisits,family = "poisson",scale = -1,method = "ML")
+summary(nondocco_gam_2)
+```
+
+##### using backward elimination to remove insignificant smooth terms;
+
+The smooth terms income and nonpresc were removed from the model.
+
+```{r q2 b ii}
+nondocco_gam_4 <- gam(nondocco ~ 
+                     sex+freerepa+chcond1+chcond2+
+                     s(age)+s(income)+s(illness, k = 6)+s(actdays)+s(hscore)+s(prescrib, k = 6),
+                 data = dvisits,family = "poisson",scale = -1,method = "ML")
+summary(nondocco_gam_4)
+```
+
+##### using a deviance test (with the anova() function) to replace smooth terms with linear parametric terms where there is no significant difference. 
+
+A warning message recommends that F testing is not appropriate for poisson distributed families. To check the p-values from using this test, I followed the method described [here](https://stats.stackexchange.com/questions/129958/glm-in-r-which-pvalue-represents-the-goodness-of-fit-of-entire-model) (similar to the chapter on random effects). This is similar to the chi-sq approximations used in the count (i.e. poisson) regression sections of Faraway (2016). It's important to note the p-values here are only approximate (Faraway,2016).
+
+Relatively similar p-values result from either method. Both forms of tests consistently found the change in terms to be significant or non-significant. actdays was replaced with a linear equivalent. One interesting point to note is that, in the call of the function, if the s() term is replaced with a linear term between other s() terms, the model will interpret this as a request to weight the model by that term (i.e. the smooth term will be removed and the model will instead be weighted by that variable specified in the term).
+
+```{r q2 b iii}
+#age
+nondocco_gam_4a <- gam(nondocco ~ 
+                     sex+freerepa+chcond1+chcond2+age+s(illness, k = 6)+s(actdays)+s(hscore)+s(prescrib, k = 6),
+                 data = dvisits,family = "poisson",scale = -1,method = "ML")
+#illness
+nondocco_gam_4b <- gam(nondocco ~ 
+                     sex+freerepa+chcond1+chcond2+illness+
+                     s(age)+s(actdays)+s(hscore)+s(prescrib, k = 6),
+                 data = dvisits,family = "poisson",scale = -1,method = "ML")
+#presib
+nondocco_gam_4c <- gam(nondocco ~ 
+                     sex+freerepa+chcond1+chcond2+prescrib+
+                     s(age)+s(illness, k = 6)+s(actdays)+s(hscore),
+                 data = dvisits,family = "poisson",scale = -1,method = "ML")
+#hscore
+nondocco_gam_4d <- gam(nondocco ~ 
+                     sex+freerepa+chcond1+chcond2+hscore+
+                     s(age)+s(illness, k = 6)+s(actdays)+s(prescrib, k = 6),
+                 data = dvisits,family = "poisson",scale = -1,method = "ML")
+#actdays
+nondocco_gam_4e <- gam(nondocco ~ 
+                     sex+freerepa+chcond1+chcond2+actdays+
+                     s(age)+s(illness, k = 6)+s(hscore)+s(prescrib, k = 6),
+                 data = dvisits,family = "poisson",scale = -1,method = "ML")
+anova(nondocco_gam_4,nondocco_gam_4a,test = "F")
+anova(nondocco_gam_4,nondocco_gam_4b,test = "F")
+anova(nondocco_gam_4,nondocco_gam_4c,test = "F")
+anova(nondocco_gam_4,nondocco_gam_4d,test = "F")
+anova(nondocco_gam_4,nondocco_gam_4e,test = "F")
+
+pchisq(deviance(nondocco_gam_4a)-deviance(nondocco_gam_4),
+       df.residual(nondocco_gam_4a)-df.residual(nondocco_gam_4),
+       lower.tail=FALSE)
+pchisq(deviance(nondocco_gam_4b)-deviance(nondocco_gam_4),
+       df.residual(nondocco_gam_4b)-df.residual(nondocco_gam_4),
+       lower.tail=FALSE)
+pchisq(deviance(nondocco_gam_4c)-deviance(nondocco_gam_4),
+       df.residual(nondocco_gam_4c)-df.residual(nondocco_gam_4),
+       lower.tail=FALSE)
+pchisq(deviance(nondocco_gam_4d)-deviance(nondocco_gam_4),
+       df.residual(nondocco_gam_4d)-df.residual(nondocco_gam_4),
+       lower.tail=FALSE)
+pchisq(deviance(nondocco_gam_4e)-deviance(nondocco_gam_4),
+       df.residual(nondocco_gam_4e)-df.residual(nondocco_gam_4),
+       lower.tail=FALSE)
+```
+
+#### What is the model that you are left with? Is it significantly different from the full model in (a)? 
+
+As the tests below indicate, the model is does not have statistically significantly different fit from the initial full GAM model. However, the forumulation is considerably different, as we have removed several linear and smooth terms, and changed a smooth term to a linear term.
+
+```{r q2 b final}
+summary(nondocco_gam_4e)
+anova(nondocco_gam,nondocco_gam_4,test = "F")
+pchisq(deviance(nondocco_gam_4)-deviance(nondocco_gam),
+       df.residual(nondocco_gam_4)-df.residual(nondocco_gam),
+       lower.tail=FALSE)
+
+nondocco_gam_4e$call
+nondocco_gam$call
+names(nondocco_gam$coefficients)
+names(nondocco_gam_4e$coefficients)
+```
+
+
+#### Fit a GLM under the same conditions as the reduced model, and test whether this model is significantly different from the GAM produced in (b). 
+
+The model fit using a GLM the same conditions (read: including the same variables and specifying the same family) is significantly different from the GAM. The manual chi-sq approximated deviance test does not seem to be appropriate for comparing a GLM and GAM.
+
+```{r q2 c}
+nondocco_reduced_glm <- glm(nondocco ~ sex+freerepa+chcond1+chcond2+age+illness+actdays+hscore+prescrib,data = dvisits,family = "poisson")
+anova(nondocco_gam,nondocco_reduced_glm,test = "F")
+#pchisq(deviance(nondocco_gam_4)-deviance(nondocco_reduced_glm),
+#       df.residual(nondocco_gam_4)-df.residual(nondocco_gam),
+#       lower.tail=FALSE)
+```
+
+#### According to the parametric coefficient estimates from the reduced GAM from part (b), what sort of person is likely to visit non-doctor health professionals the most in the preceding two weeks? 
+
+(ignoring possible interactions...) Someone who is: 
+
+* male
+* not covered for a free visit due to age/disability/veteran/veteran-family
+* does not have a chronic condition that does not limit them in activity
+* who _does_ have chronic condition that _does_ limit them in activity
+* who has had no days of limited acitivty in the last two weeks
+
+```{r q2 d}
+options(scipen = 10)
+summary(nondocco_gam_4e)[1]
+```
+
+#### Present a graphical display of how the smooth terms are likely to affect how often a person is likely to visit anon-doctor health professional, and interpret these patterns. In particular, note regions of the predictor space wherethere appear to be significant trends, and regions where there appears to be no significant trend. 
+
+Conditional plots of the effect of the smooth variables on the response are shown. Uncertainly of the mean, as well as the smooth, are shown in the shaded regions. The second set of plots show the conditional residuals in addition to the above information. The rugs indicate that the data is highly grouped! (Something I did not initially pick up...always do an EDA). The tables below show this.
+
+All possible 2d combinations of smooths (6) are also shown below. Age and illness appear to have a complicated relationship.
+
+The models indicate some interesting univariate conditional trends;
+
+**Age**: does not have the directly linear relationship we might intuitively expect, although it is true that young people have less visits and old more. There is a considerable trough around 0.4  - 0.6 where visits are low. Between age 0.3 and 0.6 there does not appear to be a significant trend present
+
+**Illness**: we can see that the having no illness is associated with a lowered chance of visiting (as would be expected). Having several days maximises the (conditional) chance, whilst 2-5 days has an increased (but lower than 2 days) chance of being associated with a visit. Past 2 days of illness there does not appear to be a significant trend present.
+
+**HScore**: Suprising, this appears to have an almost quadratic fit, with the number of non-doctor visits maximised at poor, but not very bad health, lowered with good health and minimised with very bad health. A plausible explanation for this is that those with very poor health may be in the primary care phase of their treatment, i.e. you are unlikely to need physio when your legs are broken (a flippant example).
+
+**Prescrib**: those with many prescribed medications (n>6) recently used and those with non or few medications (n<3) have a lowered chance of non-doctors visits. Those with some, but not a plethora of medications (3<n<5) used have the highest association with visitng a non doctor health professional.
+
+```{r q2 e}
+#par(mfrow = c(2,3))
+#plot(nondocco_gam_4e,se = T,shade = T,scale = 0,n = 50000,seWithMean = T,select = 1)
+#plot(nondocco_gam_4e,se = T,shade = T,scale = 0,n = 50000,seWithMean = T,select = 2)
+#plot(nondocco_gam_4e,se = T,shade = T,scale = 0,n = 50000,seWithMean = T,select = 3)
+#plot(nondocco_gam_4e,se = T,shade = T,scale = 0,n = 50000,seWithMean = T,select = 4)
+#plot(nondocco_gam_4e,se = T,shade = T,scale = 0,n = 50000,seWithMean = T,select = 5)
+plot(nondocco_gam_4e,pages=1,scheme = 1,cex = 0.25,col = '#FF8000',shade.col = 'gray90',n = 100000,main = "Smooth Components of GAM",seWithMean = T) 
+plot(nondocco_gam_4e,pages=1,scheme = 1,cex = 0.25,col = '#FF8000',shade.col = 'gray90',n = 100000,main = "Residuals of GAM",residuals = T)
+
+par(mfrow = c(2,2),mar = c(0.5,0.5,0.5,0.5))
+vis.gam(nondocco_gam_4e,theta=-45,color="heat",view = c("illness","prescrib"),nCol = 5,ticktype = "simple",zlab = "Non-Doctors Visits",type = 'response')
+vis.gam(nondocco_gam_4e,theta=-45,color="heat",view = c("illness","age"),nCol = 5,ticktype = "simple",zlab = "Non-Doctors Visits",type = 'response')
+vis.gam(nondocco_gam_4e,theta=-45,color="heat",view = c("illness","hscore"),nCol = 5,ticktype = "simple",zlab = "Non-Doctors Visits",type = 'response')
+vis.gam(nondocco_gam_4e,theta=-45,color="heat",view = c("prescrib","age"),nCol = 5,ticktype = "simple",zlab = "Non-Doctors Visits",type = 'response')
+vis.gam(nondocco_gam_4e,theta=-45,color="heat",view = c("prescrib","hscore"),nCol = 5,ticktype = "simple",zlab = "Non-Doctors Visits",type = 'response')
+vis.gam(nondocco_gam_4e,theta=-45,color="heat",view = c("age","hscore"),nCol = 5,ticktype = "simple",zlab = "Non-Doctors Visits",type = 'response')
+
+table(dvisits$age)
+table(dvisits$income)
+table(dvisits$illness)
+table(dvisits$hscore)
+table(dvisits$prescrib)
+```
+
+#### For the person represented as the final observation in the dataset, compute the predicted probability distribution for their visits to the non-doctor health professional in the preceding two weeks using the two models 
+
+Let's call him Dave (he is male after all). The gist of this procedure (from a slightly more complicated prediction scenario) comes from [here](https://stats.stackexchange.com/questions/300216/simulating-responses-from-fitted-generalized-additive-model).
+
+```{r final person}
+(Dave <- dvisits[nrow(dvisits),])
+```
+
+##### The reduced GLM from part (c) 
+
+```{r q2 f i}
+predict.glm(nondocco_reduced_glm,Dave,type = "response",se.fit = T)
+hist(rpois(100000,rnorm(100000,0.06627531,0.009154955)),main = "Predicted Posterior Distribution: GLM",xlab = "Number of Non-Doctor Health Professional Visits",col = 'red')
+table(rpois(100000,rnorm(100000,0.06627531,0.009154955)))
+```
+
+##### The reduced GAM from part (b)
+
+```{r q2 f ii}
+predict.gam(nondocco_gam_4e,Dave,type = "response",se.fit = T,unconditional = T)
+hist(rpois(100000,rnorm(100000,0.1089584,0.0119574)),main = "Predicted Posterior Distribution: GAM",xlab = "Number of Non-Doctor Health Professional Visits",col = 'red')
+table(rpois(100000,rnorm(100000,0.1089584,0.0119574)))
+```
+
+#### i.e. the predicted probability this person visits 0, 1, 2, 3 ... n times. Comment on the differences in these distributions. 
+
+The errors on the predictions for the GLM are much higher than the GAM model. The GLM model is more dispersed, having a higher mean and error on that mean, than the GLM model. Hence, the GLM model predicts a higher probability that Dave will visit the doctor once, or even twice. In both models. These differences are perhaps illustrated better in tabular form, where we see the GLM model predicts Dave is only 64% as likely to go for one non-doctor visit (and much less likely to go for 2,3 or 4 visits). 
