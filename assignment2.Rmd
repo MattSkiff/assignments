@@ -1,0 +1,1688 @@
+---
+title: "Covariance Matrix Estimation"
+subtitle: 'STATS522 Assignment 2'
+author: "Matthew Skiffington"
+output: 
+  html_document:
+    fontsize: 11pt
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    number_sections: false
+    df_print: kable
+    theme: journal
+    highlight: monochrome
+    css: button.css
+---
+<style>
+  .main-container {
+    max-width: 1900px !important;
+  }
+</style>
+<script src="js/hideAll.js"></script>
+```{r setup, include=TRUE,warning=FALSE,message=FALSE}
+suppressWarnings(library(ddpcr))# Gets cov.shrink() to STFU
+quiet(library(MASS)) # Generation of samples from multivariate normal distributions
+quiet(library(corpcor)) # Ledoit Wolf shrinkage estimator
+quiet(library(nlshrink)) # 2nd ver Ledoit Wolf shrinkage estimator
+quiet(library(purrr)) # calculating dot products by mapping sample matrices to covariance
+quiet(library(ggplot2));quiet(library(ggridges)) # customised graphics
+quiet(library(grid));quiet(library(gridExtra)) # arranging arrays of ggplots
+quiet(library(reshape2)) # melting dataframes
+quiet(library(stringr)) # str_extract
+quiet(library(lemon)) # grid_arrange_shared_legend()
+quiet(library(naturalsort)) 
+quiet(library(kableExtra)) # nice tables in R markdown
+quiet(library(gplots)) # base R heatmaps extended
+quiet(library(gridGraphics)) # heatmap multiplotting via grid
+quiet(library(pracma)) # dot function
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(dpi=300,fig.width=8,fig.height=5)
+knitr::opts_chunk$set(out.extra = 'class="plot"')
+```
+
+# Introduction
+
+The purpose of this report is to verify known issues that occur during the estimation of the covariance matrix in multivariate statistics, specifically that of estimates from the multivariate normal distribution. This issues are known to arise and be exacerbated when the dimensionality (p) of the covariance matrix to be estimated is large.  We also investigate whether these issues can be alleviated by switching from the standard (maximum likelihood) estimator to a diagonalised version and/or a shrinkage estimator implemented by Ledoit and Wolf (2004). This is motivated by the importance of the covariance matrix in various statistical procedures and techniques, as well as being an important estimate (often seen in the form of the scaled correlation matrix) in it's own right. For example, the covariance matrix is used in Principal Components Analysis ("PCA") (Pearson, 1901), data whitening (Kessy, Lewin & Strimmer, 2018) and the Karhunen-Loeve Transform (Dony, 2001, pg 20-55). These techniques themselves are ubiquitous in statistics and other fields, finding use in regression, ranking, dimensionality reduction, clustering (Reris & Brooks, 2015), spherical K-means (Coates & Ng, 2012) and efficient image compression. Fields where covariance estimation is of direct relevance include finance (Bai & Shi, 2011) and genomics (Serra, Corretto, Fratello & Tagliaferri, 2017)
+
+# Method 
+
+Briefly, the population covariance matrix is a matrix of the variances between a set of random variables, expressed as;
+
+$$
+\Sigma = \begin{pmatrix} var(X_1) & cov(X_2,X_1) & cov(X_3,X_1) \\ cov(X_2,X_1) & var(X_2) & cov(X_3,X_1) \\ cov(X_3,X_1) & cov(X_2,X_3) & var(X_3) \end{pmatrix}
+$$
+
+Where $cov(X_i,X_j) = E[(X_i - \mu_{X_i})(X_j - \mu_{X_j})]$ and $var(X_i) = E[(X_i - \mu_{X_i})^2]$. The diagonal entries are $cov(X_i,X_i)$ and so reduce down to $var(X_i)$.
+
+We consider the situation where $X_1,X_2,...,X_n \stackrel{i.i.d}{\sim} \mathcal{N}(\mu,\Sigma)$ is a sample of size $n$ from a multivariate normal distribution over $\mathbb{R}^p$.
+
+In order generate samples from a multivariate normal distribution, we must specify the parameters of the distribution. Here, we specify that $\mu =  \mathbb{0}$ (i.e. that the mean vector is zero in each element) and we specify four types of covariance structures: the identity covariance matrix, a covariance matrix with linear decaying diagonals, a covariance matrix with exponentially decaying and one form of toeplitz matrix as a covariance matrix. All four of these matrices meet the requirements that the matrix is symmetric i.e $A = A^T$ and positive definite i.e. none of the eigenvalues are negative. This is known, as the eigenvalues for a diagonal matrix are simply it's diagonal elements and for the toeplitz matrix, all the diagonal entries are positive and the sum of off-diagonal entries for that row are less than the diagonal entry for that row.
+
+For each covariance structure, we generate samples of a size $n$ dependent on the dimensionality . So sample sizes range over $n = \{p, p \log(p), 5p \log(p), 10p \log(p)\}$ and the dimensionalities (read: matrix width) of the samples range over $p = \{5,10,50,100,250\}$. For each combination of covariance structure, sample size and dimensionality, we repeat the simulation 20 times, using `replicate()`. This means we generate 5 (sample sizes) x 4 (dimensionalities) x 4 (covariance structures) * 20 (replications/simulations). Hence, we generate 1,600 matrices. 
+
+
+```{r matrix generation setup,eval=TRUE,cache = T}
+# experimental setup - dimensionality, mean vectors (all 0), sample sizes (a function of dimensionality)
+p = c(5,10,50,100,250)
+mean_vectors = sapply(X = p,FUN = rep,x = 0, times = p)
+sample_size = list(p,ceiling(p*log(p)),ceiling(5*p*log(p)),ceiling(10*p*log(p)))
+```
+
+Below is the enumerated combinations of sample sizes we are exploring;
+
+```{r sample sizes,cache = T}
+sample_size_ <- function(p) {
+    df<- rbind(p,p*log(p),5*p*log(p),10*p*log(p))
+    rownames(df) <- c("n=p","n=p*log(p)","n=5*p*log(p)","n=10*p*log(p)")
+    colnames(df) <- c("p=5","p=10","p=50","p=100","p=250")
+    return(df)
+}
+ceiling(sample_size_(p)) %>% kable() %>% kable_styling() %>% add_header_above(header = c("Sample Sizes" = 6)) 
+```
+
+# Matrix Generation 
+
+## Identity
+
+$$\Sigma_1 := \mathbb{I}_p$$
+As above, the identity covariance matrix is simply the identity matrix (of dimensionality p) and so has 1 down the entries of the diagonal and 0 on the off-diagonal entries.
+
+```{r diagonal,cache = T}
+# identity matrix generation
+# example
+setNames(as.data.frame(diag(3)),c("","","")) %>% kable() %>% kable_styling() %>% add_header_above(header = c("Example Identity Covariance Matrix Structure (p = 3)" = 3)) 
+```
+
+## Linear
+
+$$\Sigma_2 := \Sigma_2(i,j) = 0 \ if \ i \neq j \ and \ \Sigma_2(i,i) = p + 1 - i$$
+As above, this is a diagonally dominant symmetric matrix with 0s on the off-diagonal entries and a linearly decreasing sequence in unit increments in the diagonals.
+
+```{r linear,cache = T}
+# linear decay matrix generation
+diag_linear_decay <- function(n) {
+	return(diag(n:1,n,n))
+}
+
+# example 
+setNames(as.data.frame(diag_linear_decay(3)),c("","","")) %>% kable() %>% kable_styling() %>% add_header_above(header = c("Example Linearly Decaying Covariance Matrix Structure (p = 3)" = 3)) 
+
+```
+
+## Exponential
+
+$$ \Sigma_3 := \Sigma_23i,j) = 0 \ if \ i \neq j \ and \ \Sigma_3(i,i) = p^{(2-i)}$$
+As above, this is a symmetric matrix with 0s on the off-diagonals. The diagonals are an exponentially decreasing sequence.
+
+```{r exponential,cache = T}
+# exponential decay matrix generation
+exp_decay <- function(n) {
+		v = c()
+		for (i in 1:n) {
+			v[i] <- n^(2-i)
+		}
+		return(diag(v,n,n))
+}
+
+# example 
+setNames(as.data.frame(round(exp_decay(3),2)),c("","","")) %>% kable() %>% kable_styling() %>% add_header_above(header = c("Example Exponentially Decaying Covariance Matrix Structure (p = 3)" = 3)) 
+
+```
+
+## Toeplitz
+
+$$\Sigma_4 := \Sigma_4(i,j) = 0.5^{|i - j|}$$
+As above, the Toeplitz matrix is diagonally dominant and symmetric. In contrast, it has constant diagonals and the covariances (off diagonals) scale according to the similarity of the matrix indices (such that $cov(X_1,X_2)$ will be higher than $cov(X_1,X_5)$).
+
+```{r toepltiz,cache = T}
+# toeplitz matrix generation
+toeplitz <- function(n) {
+	i = 1
+	j = 1
+	m = matrix(nrow = n,ncol = n)
+	for (j in 1:n) {
+		for (i in 1:n) {
+			m[i,j] = 0.5^(abs(i-j))
+		}
+	}
+	return(m)
+}
+
+# example
+setNames(as.data.frame(toeplitz(3)),c("","","")) %>% kable() %>% kable_styling() %>% add_header_above(header = c("Example Toeplitz Covariance Matrix Structure (p = 3)" = 3)) 
+```
+
+
+
+```{r matrix generation,eval=TRUE,cache = T}
+# matrix generation function
+gen_samples <- function(n,mean_vectors,p,sigma_type) {
+	
+	res = switch(sigma_type,list("identity" = list()),list("linear_decay" = list()),list("exp_decay" = list()),list("toeplitz" = list()))
+	
+	for (i in 1:length((sample_size))) {
+		if (sigma_type == 1) {
+				res[[1]][[i]] = mapply(mvrnorm,n = sample_size[[i]], mu = mean_vectors, Sigma = sapply(p,diag))
+			} else if (sigma_type == 2) {
+				res[[1]][[i]] = mapply(mvrnorm,n = sample_size[[i]], mu = mean_vectors, Sigma = sapply(p,diag_linear_decay))
+			} else if (sigma_type == 3) {
+				res[[1]][[i]] = mapply(mvrnorm,n = sample_size[[i]], mu = mean_vectors, Sigma = sapply(p,exp_decay))	
+			} else if (sigma_type == 4) {	
+				res[[1]][[i]] = mapply(mvrnorm,n = sample_size[[i]], mu = mean_vectors, Sigma = sapply(p,toeplitz))	
+			}
+		names(res[[1]][[i]]) <- c("p=5","p=10","p=50","p=100","p=250")
+	}
+	names(res[[1]]) <- c("n=p","n=p*log(p)", "n=5p*log(p)","n=10p*log(p)")
+	return(res)
+}
+
+# generation of matrices (samples from multivariate normal with specified covariance structure)
+res <- gen_samples(n = sample_size,mean_vectors = mean_vectors,p = p,sigma_type = 1)
+```
+
+R Markdown requires recompilation without caching. Caching such large vectors is not currently feasible, and reading in the original samples is also not feasible without special methods (e.g. the R feather package for lazy loading). Hence, we skip generation of the sample matrices in this document and proceed to directly read in the pre-generated result covariance estimates.
+
+```{r large matrix generation,eval=FALSE}
+n_rep <- 20
+res_rep_sigma1 <- replicate(n_rep, gen_samples(n = sample_size,mean_vectors = mean_vectors,p = p,sigma_type = 1))
+#saveRDS(res_rep_sigma1,"res_rep_sigma1.rds")
+#res_rep_sigma1 <- readRDS("res_rep_sigma1.rds")
+res_rep_sigma2 <- replicate(n_rep, gen_samples(n = sample_size,mean_vectors = mean_vectors,p = p,sigma_type = 2))
+#saveRDS(res_rep_sigma2,"res_rep_sigma2.rds")
+#res_rep_sigma2 <- readRDS("res_rep_sigma2.rds")
+res_rep_sigma3 <- replicate(n_rep, gen_samples(n = sample_size,mean_vectors = mean_vectors,p = p,sigma_type = 3))
+#saveRDS(res_rep_sigma3,"res_rep_sigma3.rds")
+#res_rep_sigma3 <- readRDS("res_rep_sigma3.rds")
+res_rep_sigma4 <- replicate(n_rep, gen_samples(n = sample_size,mean_vectors = mean_vectors,p = p,sigma_type = 4))
+#saveRDS(res_rep_sigma4,"res_rep_sigma4.rds")
+#res_rep_sigma4 <- readRDS("res_rep_sigma4.rds")
+```
+
+## Data plots
+
+To give some idea of the relation of the covariance structure to the shape of the data, we plot densities for samples from each;
+
+```{r data plots}
+plot_dat <- function(cov_,title) {
+x <- as.data.frame(mvrnorm(20000,mu = c(0,0),Sigma = cov_))
+plot <- ggplot(data = x,aes(x=V1,y=V2)) + 
+  stat_density_2d(aes(fill = ..level..), geom = "polygon", colour="white") +
+  labs(x = "X",y = "Y",title = title) +
+  scale_fill_viridis_c(limits = c(0,0.2),name = "Density") +
+  ylim(c(-2.5,2.5)) + xlim(c(-3.0,3.0))
+  theme_light() 
+return(plot)
+}
+
+g <- list()
+g[[1]] <- plot_dat(diag(2),"Identity")
+g[[2]] <- plot_dat(diag_linear_decay(2),"Linear")
+g[[3]] <- plot_dat(exp_decay(2),"Exponential")
+g[[4]] <- plot_dat(toeplitz(2),"Toeplitz")
+
+	nplots = 4
+	ncol = 2
+	nrow = 2
+	eval(parse(text = paste0("quiet(grob <- grid_arrange_shared_legend(", paste0("g", "[[", c(1:nplots), "]]", sep = '', collapse = ','), ",ncol =", ncol, ",nrow =", nrow, ", position = 'bottom', top=grid::textGrob(paste('2D Density Estimates from Samples from the Multivariate Normal'), gp=grid::gpar(fontsize=14)),plot = T))", sep = '')))
+```
+
+
+# Covariance estimation 
+
+The objective now is to investigate the estimation of the population covariance structure of the independent variables from which these matrices are sampled. The population covariance matrix structure is known. Here, we use three types of estimators: maximum likelihood with known mean, a diagonal estimator of only variances, and the Ledoit-Wolf shrinkage estimator.
+
+We define these estimators and run each of them across the 1,600 matrices representing samples from the multivariate normal distribution, producing 4,400 covariance matrix estimates.
+
+## The Maximum-Likelihood Estimator
+
+$$\hat{\Sigma} := \frac{1}{n} \sum\limits_{n=1}^{n} (x_i-\hat{\mu})(x_i-\hat{\mu})^T \ where \ \hat{\mu} := \frac{1}{n}\sum\limits_{n=1}^{n} x_i$$
+This is also known as the *Sample Covariance Matrix*. As we know the population mean vector, we substitute this into the equation, simplifying it;
+
+$$\hat{\Sigma}_{\mu = 0} := \frac{1}{n} \sum\limits_{n=1}^{n} x_ix_i^T $$
+
+We see that the maximum likelihood estimate of covariance (using our function, `ml_cov`) is very similar to the inbuilt R estimate using `cov()` or `var()` (which would, in contrast, use an estimate of the mean vector, when supplied with a matrix).
+
+```{r ml covariance estimation,eval=TRUE,cache = T}
+ml_cov <- function(m) {
+# classic maximum likelihood estimator
+# as we know the mean vector = 0 in each element, this drops out from the calculation
+(1/nrow(m)) * (t(m) %*% m)
+}
+
+setNames(as.data.frame(ml_cov(res$identity$`n=p`[[1]])),c("","","","","")) %>% round(2) %>% kable() %>% kable_styling() %>% add_header_above(header = c("Example Covariance Estimate using ml_cov()" = 5)) 
+
+setNames(as.data.frame(cov(res$identity$`n=p`[[1]])),c("","","","","")) %>% round(2) %>% kable() %>% kable_styling() %>% add_header_above(header = c("Example Covariance Estimate using ml_cov()" = 5)) 
+```
+
+## The Ledoit-Wolf Estimator
+
+This is a shrinkage estimator, which shrinks the extreme entries in the covariance estimator towards the center (Ledoit & Wolf, 2003). I found the functions `cov_shrink()` and `linshrink_cov()` from the corpcor and nlshrink respectively both deviated from the results of the MATLAB implementation (when run in MATLAB, and then translated to R) on a test matrix.
+
+```{r lw covariance estimation,eval=TRUE,cache = T}
+# We check that the package is doing things correctly by translating the matlab code;
+LedoitWolf_cov_estimate <- function(x,shrink,return_shrink = F) {
+  # demean matrix
+  size_x <- dim(x)
+  t <- size_x[1] 
+  n <- size_x[2] 
+  meanx <- apply(FUN = mean,x,MARGIN = 2)
+  x <- x-t(replicate(nrow(x),apply(FUN = mean,x,MARGIN = 2))) # as per matlab code
+  
+  # sample covariance matrix - assuming mean vector = 0 ???
+  sample_cov <- (1/t)*(t(x) %*% x)
+  #print(sample_cov) #debugging
+  
+  # compute prior
+  mean_var <- mean(diag(sample_cov)) # mean of diagonal entries of sample covariance matrix
+  prior <- mean_var * diag(1,n)
+  	
+  	# compute shrinkage parameters if none provided
+  	if (missing(shrink)) {
+  	# what they call p
+  	y <- x^2
+  	phiMat <- t(y) %*% y/t-sample_cov^2
+  	phi <- sum(phiMat)
+  	# what they call c
+  	gamma <- norm(sample_cov - prior,type = "F")^2 # Frobenius Norm
+  	
+  	# compute shrinkage constant
+  	kappa <- phi/gamma
+  	shrink <- max(0,min(1,kappa/t))
+  		
+  	# checking atomicity and length is the standard scalar check in R, as far as I am aware, believe it or not
+  	} else if (length(shrink) != 1 || !is.atomic(shrink)) { # nargin = number of function input arguments
+  		stop("shrink must be atomic and of length 1")
+  	}
+  
+  sigma <- shrink * prior+(1-shrink) * sample_cov
+  if (!return_shrink) {
+    return(sigma)
+  } else {
+    return(list('sigma' = sigma,'shrinkage' = shrink))
+  	#beep() #  )': no ding
+  }
+
+}
+
+# checking package functions against custom function translated and tested against matlab code
+x <- t(matrix(1:9,nrow = 3)) # test matrix 
+setNames(as.data.frame(linshrink_cov(x)),c("","","")) %>% round(2) %>% kable() %>% kable_styling() %>% add_header_above(header = c("Example Covariance Estimate using linshrink_cov()" = 3)) # differ from matlab
+
+cvs <- cov.shrink(x)
+class(cvs) <- 'matrix'
+cvs <- as.data.frame(cvs)
+
+setNames(cvs,c("","","")) %>% round(2) %>% kable() %>% kable_styling() %>% add_header_above(header = c("Example Covariance Estimate using cov_shrink()" = 3)) # differ from matlab
+attributes(cov.shrink(x))
+
+setNames(as.data.frame(LedoitWolf_cov_estimate(x,return_shrink = T)[[1]]),c("","","")) %>% round(2)  %>% kable() %>% kable_styling() %>% add_header_above(header = c("Example Covariance Estimate using our function" = 3)) # same as matlab
+
+LedoitWolf_cov_estimate(x,return_shrink = T)[[2]]
+
+# only translated code works identically to matlab function (verified using home copy of matlab)
+```
+
+## The Diagonalised Maximum-Likelihood Estimator
+
+This is simply the diagonal entries of the maximum likelihood covariance matrix. This has the advantage of being positive definite and incorporating structure into estimation (by only taking the diagonal entries) of the covariance that is known to be true for three of the four covariance structures. This is the idea of imposing some ad-hoc structure on the covariance matrix such as diagonality (in our case) or a factor model (e.g. as used in finance) (Ledoit & Wolf, 2004). This bears the disadvantage that the model will be misspsecified due to our lack of prior knowledge regarding the covariance structure (such as is the case with using this estimator to estimate a toeplitz covariance structure).
+
+$$\hat{\Sigma}_{DIAG} := diag(\hat{\Sigma}_{ML})$$
+
+```{r diag ml covariance estimation,eval=TRUE,cache = T}
+# Finally, we simply use the diagonal entries of the ML estimate as our 'diagonal estimator'
+# So we simply create a wrapper function for the existing ML estimator
+diag_ml_cov <- function(x) {
+	return(diag(diag(ml_cov(x)))) # nested diag so it returns covariance as a matrix, not a vector
+}
+```
+
+## Examples
+
+```{r cov example}
+# example of each covariance estimator
+options(scipen = 5,digits = 3)
+m_t <- round(as.matrix(mtcars[1:3,1:3]),2)
+print(m_t)
+ml_cov(m_t)
+diag_ml_cov(m_t)
+LedoitWolf_cov_estimate(m_t)
+```
+
+Due to caching issues, the estimates are pre-generated and read in, but can be generated with the code below.
+
+```{r cov estimates generation}
+#matrices <- list(`identity` = res_rep_sigma1,
+#                 `linear` = res_rep_sigma2,
+#                 `expon` = res_rep_sigma3,
+#                 `toeplitz` = res_rep_sigma4)
+
+# generating covariance matrice estimates for each matrix, using each type of estimator - this results in 6,000 matrices 
+# ml_cov_estimates <- rapply(matrices, ml_cov, how="replace")
+# diag_ml_cov_estimates <- rapply(matrices, diag_ml_cov, how="replace")
+# LedoitWolf_cov_estimates <- rapply(matrices, LedoitWolf_cov_estimate, how="replace",return_shrink = F) 
+
+# due to computational time involved, estimating on a seperate machine - FAILED
+# works (slowly on individual matrices) but fails when recursively applied over list...
+# due to computational time - had to use package version (cov.shrink)
+
+# quiet(LedoitWolf_cov_estimates <- rapply(matrices, cov.shrink, how="replace")) # WAY faster
+# LW Estimates calculated on laptop overnight - saved as RDS, imported here
+
+LedoitWolf_cov_estimates <- readRDS("lw_est.rds")
+ml_cov_estimates <- readRDS("ml_cov_estimates.rds")
+diag_ml_cov_estimates <- readRDS("diag_ml_cov_estimates.rds")
+```
+
+#  Assessing Covariance Estimates 
+
+In order to assess the covariance estimators, we must have a 'ground truth' comparison for some of the criteria we are using. For example, this is necessary to calculate the sum of squared errors. It is also necessary to make comparisons of the eigenvalues and eigenvectors. Hence, we generate the covariance structure associated with each dimensionality below.
+
+```{r covariance estimation setup,eval=TRUE,cache = TRUE}
+gen_covariance_structures <- function(p,sigma_type) {
+	
+	res = switch(sigma_type,list("identity" = list()),list("linear_decay" = list()),list("exp_decay" = list()),list("toeplitz" = list()))
+	
+		if (sigma_type == 1) {
+			res[[1]] = sapply(p,diag)
+		} else if (sigma_type == 2) {
+			res[[1]] = sapply(p,diag_linear_decay)
+		} else if (sigma_type == 3) {
+			res[[1]] = sapply(p,exp_decay)
+		} else if (sigma_type == 4) {	
+			res[[1]] = sapply(p,toeplitz)
+		names(res[[1]]) <- c("p=5","p=10","p=50","p=100","p=250")
+	}
+	return(res)
+}
+
+identity_cov_structure <- gen_covariance_structures(p=p,sigma = 1)
+linear_cov_structure <- gen_covariance_structures(p=p,sigma = 2)
+expon_cov_structure <- gen_covariance_structures(p=p,sigma = 3)
+toeplitz_cov_structure <- gen_covariance_structures(p=p,sigma = 4)
+
+cov_structures <- list(`identity` = identity_cov_structure,
+											 `linear` = linear_cov_structure,
+											 `exponential` = expon_cov_structure,
+											 `toeplitz` = toeplitz_cov_structure)
+
+# https://stackoverflow.com/questions/49252400/r-purrr-flatten-list-of-named-lists-to-list-and-keep-names 
+```
+
+Now that we have generated our samples of specified sample size (n) and dimensionality (p), we require a way to assess the quality of our estimates. Hence, we will use five criteria;
+
+* Eigenvalues
+* Trace
+* Dot product
+* Sum of Square Errors
+* Stability of Estimates
+
+We will focus on comparisons of the criterion for each estimator across the parameter space in n and p. The visualisations can be read downward in a column to compare constant dimensionality with increasing sample size, and left to right row-wise to compare constant sample size with increasing dimensionality.
+
+For each set of plots, we note what is observed.
+
+## Eigenvalues 
+
+To address this question, we much first take the true eigenvalues of the covariance structures. As demonstrated, these are equal to the diagonal values of the covariance structures for all but the Toeplitz covariance structure. The eigenvalues reflect the variance of the eigenvectors of the covariance matrix. These are plotted below as red lines. The covariance estimates are eigendecomposed and the largest and smallest eigenvalue retrieved. 
+
+*Identity Covariance Matrix*
+
+The Ledoit-Wolf (LW) estimator estimates the smallest covariances more accurately than the maximum likelihood (ML) and diagonalised maximum likelihood (DML). The ML estimator slightly underestimates the smallest eigenvalues and the DML estimator underestimates by quite a lot - at small sample sizes they tend to be zero.
+
+The estimators tend to have more divergent and concentrated estimates of the lowest eigenvalues with high dimensionality, while low dimensional estimates tend to be more diffuse and mixed (compare left-most column to right most). We observe a similar trend occurring with the largest eigenvalues being very close to the true covariance eigenvalues for LW, close for ML and quite divergent for DML. Again, this trend is magnified by increases in dimensionality. The severity of misestimation of the largest covariances tends to lessened as the sample size increases, especially for the DML estimator.
+
+*Linearly Decaying Covariance Matrix*
+
+We observe the LW estimator misestimates the smallest eigenvalues across n and p, while the DML and ML estimators estimate the smallest eigenvalue reasonably well. For the largest eigenvalues, the ML estimator performs best. The LW estimator performs well where $n \leq p$. The DML estimator performs worst.
+
+*Exponentially Decaying Covariance Matrix*
+
+The DML and ML estimator accurately estimate the smallest eigenvalues, whilst the LW introduces a some bias. The is greatest where both n and p are low. For the largest eigenvalues the estimates perform similarly, being reasonably accurate in general.
+
+*Toeplitz Covariance Matrix*
+
+Here we see a striking divergence in performance. At both low n and p the estimators perform similarly. At high p and low n, the ML estimator under estimates the largest eigenvalues and the DML over estimates the largest eigenvalues. For the smallest eigenvalues, at high n and at high n and high p, the DML and LW estimators perform much better than the ML estimator. Across all combinations, LW estimates the eigenvalues best and the DML estimator performs roughly equal, or better than ML. ML tends to under estimate the largest eigenvalues and over estimate the smallest, whilst DML behaves oppositely.
+
+These observations can be summarised as follows;
+
+Smallest Eigenvalues
+  
+Rank    | Identity | Linear | Exponential | Toeplitz |
+--------| -------- |------- | ----------: |--------: |
+1st     | LW       | ML     | ML/DML      | LW       |
+2nd     | ML       | DML    |             | DML      |
+3rd     | DML      | LW     | LW          | ML       |
+
+Largest Eigenvalues
+  
+Rank    | Identity | Linear | Exponential | Toeplitz |
+--------| -------- |------- | ----------: |--------: |
+1st     | LW       | ML     | ML/DML/LW   | LW       |
+2nd     | ML       | LW     |             | DML      |
+3rd     | DML      | DML    |             | ML       |
+
+```{r q1 eigenvalues,eval=TRUE,cache = TRUE}
+my_flatten <- function (x, use.names = TRUE, classes = "ANY") 
+{
+	#' Source taken from rlist::list.flatten
+	len <- sum(rapply(x, function(x) 1L, classes = classes))
+	y <- vector("list", len)
+	i <- 0L
+	items <- rapply(x, function(x) {
+		i <<- i + 1L
+		y[[i]] <<- x
+		TRUE
+	}, classes = classes)
+	if (use.names && !is.null(nm <- names(items))) 
+		names(y) <- nm
+	y
+}
+
+
+# Estimation of Eigenvalues (variances)
+# Largest and Smallest Eigenvalues compared with groundtruth 
+
+eigen_range <- function(x) {
+	# returns largest and smallest eigenvalues
+	return(range(eigen(x,only.values = T,symmetric = T)))
+}
+
+# Largest / Smallest Estimates
+
+eigen_range_ml <- rapply(ml_cov_estimates,eigen_range, how="replace")
+eigen_range_diag_ml <- rapply(diag_ml_cov_estimates,eigen_range, how="replace")
+eigen_range_LedoitWolf <- rapply(LedoitWolf_cov_estimates,eigen_range, how="replace")
+
+# Largest / Smallest Ground Truth
+
+eigen_range_cov_structures <- rapply(cov_structures,eigen_range, how="replace")
+```
+
+### Eigenvalues Dot Plots {.tabset .tabset-fade .tabset-pills}
+
+
+```{r plotting q1,cache = T}
+# defining common ggproto objects to reduce verbosity 
+rug_ <- geom_rug(mapping = aes(x = value, colour = variable),show.legend = F,alpha = 1/2) 
+ridges_ <- stat_density_ridges(mapping = aes(x = value,y = variable,fill = variable),color = "black",quantile_lines = T,quantiles = 2)
+theme_ridge <- theme_light() + theme(axis.text.x = element_text(angle = 0, hjust = 1,  vjust = -0.5,size = 7),axis.text.y = element_blank(),axis.title = element_text(size = 7)) +	theme(plot.title = element_text(size = 7))
+# + guides(color = FALSE) + scale_y_discrete(expand = expand_scale(add = c(0.2, 2.5)))
+ 
+ # ML,D-ML,LW Plotting Function
+
+plot_eigens <- function(x,y,z,start,end,covariance_structure,density = F) {
+	
+	s <- switch (covariance_structure,
+							 "Identity" = 1,
+							 "Linear" = 2,
+							 "Exponential" = 3,
+							 "Toeplitz" = 4
+	)
+	
+	ref <- my_flatten(eigen_range_cov_structures[[s]])
+	
+	options(digits = 3, scipen = -2)
+	 eigen_smallest <- list()
+	 eigen_biggest <- list()
+	 df_small <- data.frame(matrix(NA, ncol=1, nrow=21)[-1]) # from SO
+	 df_large <- data.frame(matrix(NA, ncol=1, nrow=21)[-1]) # from SO
+	 for (i in 1:20) {
+	 	title <- names(my_flatten(x)[start+i])
+	 	title <- str_remove(pattern = str_extract(pattern = "[^.]*.[^.]*",string = title),string = title)
+	 	title <- substr(title,2,nchar(title))
+	 	df_x <- as.data.frame(do.call(rbind, my_flatten(x)[seq(start+i,end,by = 20)]))
+	 	df_y <- as.data.frame(do.call(rbind, my_flatten(y)[seq(start+i,end,by = 20)]))
+	 	df_z <- as.data.frame(do.call(rbind, my_flatten(z)[seq(start+i,end,by = 20)]))
+	 	colnames(df_x) <- c('Smallest_ML',"Largest_ML")
+	 	colnames(df_y) <- c('Smallest_D_ML',"Largest_D_ML")
+	 	colnames(df_z) <- c('Smallest_TP',"Largest_TP")
+	 	quiet(df <- melt(cbind(df_x,df_y,df_z)))
+	 	df_small <- df[(df[,1] == "Smallest_ML" | df[,1] == "Smallest_D_ML" | df[,1] == "Smallest_TP" ),]
+	 	df_large <- df[(df[,1] == "Largest_ML" | df[,1] == "Largest_D_ML" | df[,1] == "Largest_TP" ),]
+	 	v <- as.numeric(ref[[rep(seq(1:5),4)[i]]])
+			if (density) {
+			
+				g <- ggplot(data = df_small) + 
+					ridges_+
+					rug_ +
+					geom_vline(xintercept = v[1],color = 'red',show.legend = F) +
+					labs(title = title,y = "density", x = "smallest eigenvalues") +
+					theme_ridge + guides(color = FALSE) + scale_y_discrete(expand = expand_scale(add = c(0.2, 2.5))) + # scal y fixes tops of ridges being cutoff
+					scale_fill_discrete(name = paste(covariance_structure," Structure |  Estimator: "),labels = c("Maximum Likelihood", "Diagonalised Maximum Likelihood", "Ledoit-Wolf Shrinkage"))
+				
+				gl <- ggplot(data = df_large) + 
+					ridges_+
+					rug_ +
+					geom_vline(xintercept = v[2],color = 'red',show.legend = F) +
+					labs(title = title,y = "density", x = "largest eigenvalues") +
+					theme_ridge + guides(color = FALSE) + scale_y_discrete(expand = expand_scale(add = c(0.2, 2.5))) +
+					scale_fill_discrete(name = paste(covariance_structure," Structure |  Estimator:"),labels = c("Maximum Likelihood", "Diagonalised Maximum Likelihood", "Ledoit-Wolf Shrinkage"))
+			} else if (!density) {
+			if (covariance_structure == "Identity") {
+		 		g <- ggplot(data = df_small) + 
+		 			geom_dotplot(mapping = aes(x = value,color = variable,fill = variable),stackgroups = T,method = "histodot") +
+		 			geom_vline(xintercept = v[1],color = 'red') +
+		 			labs(title = title,y = "count", x = "smallest eigenvalues") +
+		 			theme_light() +
+		 			theme(axis.text.x = element_text(angle = 0, hjust = 1,  vjust = -0.5,size = 7),axis.text.y = element_text(size = 7),axis.title = element_text(size = 7)) +
+		 			guides(color = FALSE) +
+		 			theme(plot.title = element_text(size = 7)) + scale_fill_discrete(name = "Identity Structure | Estimator",labels = c("Maximum Likelihood", "Diagonalised Maximum Likelihood", "Ledoit-Wolf Shrinkage"))
+		 	} else if (covariance_structure == "Exponential") {
+			 	g <- ggplot(data = df_small) + 
+			 		geom_dotplot(mapping = aes(x = value,color = variable,fill = variable),stackgroups = T,method = "histodot") +
+			 		geom_vline(xintercept = v[1],color = 'red') +
+			 		labs(title = title,y = "count", x = "smallest eigenvalues") +
+			 		theme_light() +
+			 		theme(plot.title = element_text(size = 7)) +
+			 		guides(color = FALSE) +
+			 		theme(axis.text.x = element_text(angle = 0, hjust = 1,  vjust = -0.5,size = 7),axis.text.y = element_text(size = 7),axis.title = element_text(size = 7)) + 
+					scale_fill_discrete(name = "Exponential Structure | Estimator",labels = c("Maximum Likelihood", "Diagonalised Maximum Likelihood", "Ledoit-Wolf Shrinkage"))
+		 	} else {
+		 		g <- ggplot(data = df_small) + 
+		 			geom_dotplot(mapping = aes(x = value,color = variable,fill = variable),stackgroups = T,method = "histodot") +
+		 			geom_vline(xintercept = v[1],color = 'red') +
+		 			labs(title = title,y = "count", x = "smallest eigenvalues") +
+		 			theme_light() +
+		 			theme(axis.text.x = element_text(angle = 0, hjust = 1,  vjust = -0.5,size = 7),axis.text.y = element_text(size = 7),axis.title = element_text(size = 7)) +
+		 			guides(color = FALSE) +
+		 			theme(plot.title = element_text(size = 7)) + scale_fill_discrete(name = paste(covariance_structure," Structure |  Estimator:"),labels = c("Maximum Likelihood", "Diagonalised Maximum Likelihood", "Ledoit-Wolf Shrinkage"))
+		 	}
+		 	
+		 	if (covariance_structure == "Identity") {
+		 		gl <- ggplot(data = df_large) + 
+		 			geom_dotplot(mapping = aes(x = value,color = variable,fill = variable),stackgroups = T,method = "histodot") +
+		 			geom_vline(xintercept = v[2],color = 'red') +
+		 			labs(title = title,y = "count", x = "largest eigenvalues") +
+					theme_light() +
+		 			guides(color = FALSE) +
+		 			theme(axis.text.x = element_text(angle = 0, hjust = 1,  vjust = -0.5,size = 7),axis.text.y = element_text(size = 7),axis.title = element_text(size = 7)) +
+		 			theme(plot.title = element_text(size = 7)) + 
+					scale_fill_discrete(name = "Identity Structure | Estimator",labels = c("Maximum Likelihood", "Diagonalised Maximum Likelihood", "Ledoit-Wolf Shrinkage"))	# a mad daft hack: put the title in the legend
+		 	} else if (covariance_structure == "Exponential") {
+		 		gl <- ggplot(data = df_large) + 
+		 			geom_dotplot(mapping = aes(x = value,color = variable,fill = variable),stackgroups = T,method = "histodot") +
+		 			geom_vline(xintercept = v[2],color = 'red') +
+		 			labs(title = title,y = "count", x = "largest eigenvalues") +
+		 			theme_light() +
+		 			guides(color = FALSE) +
+		 			theme(plot.title = element_text(size = 7)) +
+		 			theme(axis.text.x = element_text(angle = 0, hjust = 1,  vjust = -0.5,size = 7),axis.text.y = element_text(size = 7),axis.title = element_text(size = 7)) +
+					scale_fill_discrete(name = "Exponential Structure | Estimator: ",labels = c("Maximum Likelihood", "Diagonalised Maximum Likelihood", "Ledoit-Wolf Shrinkage"))
+					
+		 	} else {
+		 		gl <- ggplot(data = df_large) + 
+		 			geom_dotplot(mapping = aes(x = value,color = variable,fill = variable),stackgroups = T,method = "histodot") +
+		 			geom_vline(xintercept = v[2],color = 'red') +
+		 			labs(title = title,y = "count", x = "largest eigenvalues") +
+		 			theme_light() +
+		 			guides(color = FALSE) +
+		 			theme(axis.text.x = element_text(angle = 0, hjust = 1,  vjust = -0.5,size = 7),axis.text.y = element_text(size = 7),axis.title = element_text(size = 7)) +
+		 			theme(plot.title = element_text(size = 7)) + scale_fill_discrete(name = paste(covariance_structure," Structure |  Estimator: "),labels = c("Maximum Likelihood", "Diagonalised Maximum Likelihood", "Ledoit-Wolf Shrinkage")) 
+			 	}
+			} 
+	 	eigen_smallest[[i]] <- g
+	 	eigen_biggest[[i]] <- gl
+	 }
+	 density_ <- NULL;dotplot_ <- NULL
+	 if (density) { 
+	 	density_ <- "KDEs"
+	 	dotplot_ <- ""
+	 } else { 
+	 	dotplot_ <- "Dotplots" 
+	 	density_ <- ""
+	 }
+	 
+	 nplots = 20
+	 ncol = 5
+	 nrow = 4
+	 eval(parse(text = paste0("quiet(grob <- grid_arrange_shared_legend(", paste0("eigen_smallest", "[[", c(1:nplots), "]]", sep = '', collapse = ','), ",ncol =", ncol, ",nrow =", nrow, ", position = 'bottom',  
+	 												 top=grid::textGrob(paste(dotplot_,density_,'of Smallest Eigenvalues from ',covariance_structure,' Covariance Estimates'), gp=grid::gpar(fontsize=12)),bottom=grid::textGrob('Red lines indicate true population covariance smallest eigenvalues',gp = gpar(fontface = 3, fontsize = 9),hjust = 1,x = 1),plot = T))", sep = '')))
+	 eval(parse(text = paste0("quiet(grob_large <- grid_arrange_shared_legend(", paste0("eigen_biggest", "[[", c(1:nplots), "]]", sep = '', collapse = ','), ",ncol =", ncol, ",nrow =", nrow, ", position = 'bottom',  
+	 												 top=grid::textGrob(paste(dotplot_,density_,'of Largest Eigenvalues from ',covariance_structure,' Covariance Estimates'), gp=grid::gpar(fontsize=12)),bottom=grid::textGrob('Red lines indicate true population covariance largest eigenvalues',gp = gpar(fontface = 3, fontsize = 9),hjust = 1,x = 1),plot = T))", sep = '')))
+	 
+
+	 return(list('small' = df_small,'large' = df_large,'g' = grob,'gl' = grob_large))
+}
+	# we expect largest and smallest values to be 1
+```	
+
+#### Identity - Dotplots
+
+```{r plots eigen identity dotplots, dpi=300,cache = TRUE}
+df <- setNames(as.data.frame(eigen_range_cov_structures$identity$identity),c("p=5","p=10","p=50","p=100","p=250"));rownames(df) <- c("Smallest","Largest"); df %>% kable() %>% kable_styling() %>% add_header_above(header = c("True Identity Covariance Matrix Eigenvalues" = 6))
+direct <- NULL
+for (i in 1:1) {
+	if (i == 1) { 
+		bool = F
+		density <- ""
+		dotplot <- "dotplots"
+		direct <- "density_plots/"
+	}	else {
+		 bool = T
+		 density <- "density"
+		 dotplot <- ""
+		 direct <- "density_plots/"
+	}
+	eig_ident.ls <- plot_eigens(eigen_range_ml,eigen_range_diag_ml,eigen_range_LedoitWolf,0,400,"Identity",density = bool)
+	 			 eig_ident.ls[[3]] 
+	 			 eig_ident.ls[[4]] 
+}
+```
+
+
+***
+
+#### Linear - Dotplots
+
+```{r plots eigen linear dotplots, dpi=300,cache = TRUE}
+df <- setNames(as.data.frame(eigen_range_cov_structures$linear$linear_decay),c("p=5","p=10","p=50","p=100","p=250"));rownames(df) <- c("Smallest","Largest"); df %>% kable() %>% kable_styling() %>% add_header_above(header = c("True Linear Covariance Matrix Eigenvalues" = 6))
+
+direct <- NULL
+for (i in 1:1) {
+	if (i == 1) { 
+		bool = F
+		density <- ""
+		dotplot <- "dotplots"
+		direct <- "density_plots/"
+	}	else {
+		 bool = T
+		 density <- "density"
+		 dotplot <- ""
+		 direct <- "density_plots/"
+	}
+	 eig_linear.ls <- plot_eigens(eigen_range_ml,eigen_range_diag_ml,eigen_range_LedoitWolf,400,800,"Linear",density = bool)
+	 			 eig_linear.ls[[3]] 
+	 			 eig_linear.ls[[4]] 
+}
+```
+
+
+***
+
+#### Exponential - Dotplots
+
+We should expect the largest exponential eigenvalue = p and the smallest tends towards 0 as p increases.
+
+```{r plots eigen exponential dotplots, dpi=300,cache = TRUE}
+df <- setNames(as.data.frame(eigen_range_cov_structures$exponential$exp_decay),c("p=5","p=10","p=50","p=100","p=250"));rownames(df) <- c("Smallest","Largest"); df %>% kable() %>% kable_styling() %>% add_header_above(header = c("True Exponential Covariance Matrix Eigenvalues" = 6))
+direct <- NULL
+for (i in 1:1) {
+	if (i == 1) { 
+		bool = F
+		density <- ""
+		dotplot <- "dotplots"
+		direct <- "density_plots/"
+	}	else {
+		 bool = T
+		 density <- "density"
+		 dotplot <- ""
+		 direct <- "density_plots/"
+	}
+	 eig_expon.ls <- plot_eigens(eigen_range_ml,eigen_range_diag_ml,eigen_range_LedoitWolf,800,1200,"Exponential",density = bool)
+	 			 eig_expon.ls[[3]] 
+	 			 eig_expon.ls[[4]] 
+}
+```
+
+
+***
+
+#### Toeplitz - Dotplots
+
+These matrices are common in analysis of stationary stochastic processes and are common when dealing with psychometric/biometric and time series data (Mukherjee & Maiti, 1988). We see that the largest Eigenvalue tends towards 3 as $p$ increases, and the smallest tends towards $\frac{1}{3}$. 
+
+```{r plots eigen toeplitz dotplots, dpi=300,cache = TRUE}
+df <- setNames(as.data.frame(eigen_range_cov_structures$toeplitz$toeplitz),c("p=5","p=10","p=50","p=100","p=250"));rownames(df) <- c("Smallest","Largest"); df %>% kable() %>% kable_styling() %>% add_header_above(header = c("True Toeplitz Covariance Matrix Eigenvalues" = 6))
+	 
+direct <- NULL
+for (i in 1:1) {
+	if (i == 1) { 
+		bool = F
+		density <- ""
+		dotplot <- "dotplots"
+		direct <- "density_plots/"
+	}	else {
+		 bool = T
+		 density <- "density"
+		 dotplot <- ""
+		 direct <- "density_plots/"
+	}
+	 eig_toeplitz.ls <- plot_eigens(eigen_range_ml,eigen_range_diag_ml,eigen_range_LedoitWolf,1200,1600,"Toeplitz",density = bool)
+	 			 eig_toeplitz.ls[[3]] 
+	 			 eig_toeplitz.ls[[4]] 
+}
+```
+
+
+***
+
+### Eigenvalues Density Plots {.tabset .tabset-fade .tabset-pills} 
+
+#### Identity - Density
+
+```{r plots eigen identity density, dpi=300,cache = TRUE}
+direct <- NULL
+for (i in 2:2) {
+	if (i == 1) { 
+		bool = F
+		density <- ""
+		dotplot <- "dotplots"
+		direct <- "density_plots/"
+	}	else {
+		 bool = T
+		 density <- "density"
+		 dotplot <- ""
+		 direct <- "density_plots/"
+	}
+	eig_ident.ls <- plot_eigens(eigen_range_ml,eigen_range_diag_ml,eigen_range_LedoitWolf,0,400,"Identity",density = bool)
+	 			 eig_ident.ls[[3]]
+	 			 eig_ident.ls[[4]]
+}
+```
+
+
+***
+
+#### Linear - Density
+
+```{r plots eigen linear density, dpi=300,cache = TRUE}
+direct <- NULL
+for (i in 2:2) {
+	if (i == 1) { 
+		bool = F
+		density <- ""
+		dotplot <- "dotplots"
+		direct <- "density_plots/"
+	}	else {
+		 bool = T
+		 density <- "density"
+		 dotplot <- ""
+		 direct <- "density_plots/"
+	}
+	 eig_linear.ls <- plot_eigens(eigen_range_ml,eigen_range_diag_ml,eigen_range_LedoitWolf,400,800,"Linear",density = bool)
+	 			 eig_linear.ls[[3]]
+	 			 eig_linear.ls[[4]]
+}
+```
+
+
+***
+
+#### Exponential - Density
+
+```{r plots eigen exponential density,cache = T}
+direct <- NULL
+for (i in 2:2) {
+	if (i == 1) { 
+		bool = F
+		density <- ""
+		dotplot <- "dotplots"
+		direct <- "density_plots/"
+	}	else {
+		 bool = T
+		 density <- "density"
+		 dotplot <- ""
+		 direct <- "density_plots/"
+	}
+	 eig_expon.ls <- plot_eigens(eigen_range_ml,eigen_range_diag_ml,eigen_range_LedoitWolf,800,1200,"Exponential",density = bool)
+	 			 eig_expon.ls[[3]]
+	 			 eig_expon.ls[[4]]
+}
+```
+
+
+***
+
+#### Toeplitz - Density
+
+```{r plots eigen toeplitz density,cache = T}
+direct <- NULL
+for (i in 2:2) {
+	if (i == 1) { 
+		bool = F
+		density <- ""
+		dotplot <- "dotplots"
+		direct <- "density_plots/"
+	}	else {
+		 bool = T
+		 density <- "density"
+		 dotplot <- ""
+		 direct <- "density_plots/"
+	}
+	 eig_toeplitz.ls <- plot_eigens(eigen_range_ml,eigen_range_diag_ml,eigen_range_LedoitWolf,1200,1600,"Toeplitz",density = bool)
+	 			 eig_toeplitz.ls[[3]]
+	 			 eig_toeplitz.ls[[4]]
+}
+```
+
+
+***
+
+### Trace of the Covariance Matrix 
+
+The trace of a matrix is the sum of it's eigenvalues; if the matrix is symmetric, it is equal to the sum of the diagonals, which reflects the variance of each individual component of the random vector $\vec{X} = X_1,X_2,...,X_n$. Therefore, the trace reflects the overall variation present. Again, we wish to see how closely this matches the true total variation present in the covariance matrix structure we are using.
+
+As the DML estimates are simply calculated from the diagonals of the ML estimates, the trace of the ML and DML estimates will be identical. There is a high degree of consistency between the trace estimates from ML/DML and LW. On average it is difficult to say which estimator produces better results, but at high dimensionalities, a small improvement in the LW estimates over the ML/DML estimates can be observed (from the proximity of the black line, the median, to the red line, the true population covariance matrix trace). 
+
+As the sample size increases, the variance of the trace estimates decreases for all estimators. As the dimensionality increases, the variance of the trace estimates increases for all estimators.
+
+```{r q2 trace,cache = TRUE}
+# Estimation of trace of covariance matrix
+# Sum of diagonal entries (since we know the matrix is always square)
+
+tr <- function(x) { sum(diag(x)) }
+
+# Trace of Estimates
+
+trace_ml <- rapply(ml_cov_estimates,tr, how="replace")
+trace_diag_ml <- rapply(diag_ml_cov_estimates,tr, how="replace")
+trace_LedoitWolf <- rapply(LedoitWolf_cov_estimates,tr, how="replace") #function(x) { sum(eigen(x)$values) }
+
+# Trace of Ground Truth
+
+trace_cov_structures <- rapply(cov_structures,tr, how="replace")
+```
+
+### Trace Density Plots {.tabset .tabset-fade .tabset-pills}
+
+```{r trace plots,cache = T}
+#---- Q2 Plots ----
+
+# As some of the kernel density estimates overlapped nearly perfectly, decided to use ridgeline plots to clearly show all three estimators
+
+plot_traces <- function(x,y,z,start,end,covariance_structure) {
+	options(digits = 3, scipen = -2)
+
+	df_trace <- data.frame(matrix(NA, ncol=1, nrow=21)[-1]) # from SO
+	
+	s <- switch (covariance_structure,
+					"Identity" = 1,
+					"Linear" = 2,
+					"Exponential" = 3,
+					"Toeplitz" = 4
+	)
+	
+	ref <- my_flatten(trace_cov_structures[[s]])
+	traces <- list()
+	
+	for (i in 1:20) {
+		title <- names(my_flatten(x)[start+i])
+		title <- str_remove(pattern = str_extract(pattern = "[^.]*.[^.]*",string = title),string = title)
+		title <- substr(title,2,nchar(title))
+		df_x <- as.data.frame(do.call(rbind, my_flatten(x)[seq(start+i,end,by = 20)]))
+		df_y <- as.data.frame(do.call(rbind, my_flatten(y)[seq(start+i,end,by = 20)]))
+		df_z <- as.data.frame(do.call(rbind, my_flatten(z)[seq(start+i,end,by = 20)]))
+		
+
+		colnames(df_x) <- 'Trace_ML'
+		colnames(df_y) <- 'Trace_D_ML'
+		colnames(df_z) <- 'Trace_TP'
+		v <- as.numeric(ref[[rep(seq(1:5),4)[i]]])
+		quiet(df_trace <- melt(cbind(df_x,df_y,df_z)))
+			g <- ggplot(data = df_trace) + 
+				ridges_+
+				geom_vline(xintercept = v,colour = "red",show.legend = F) +
+				rug_ +
+				labs(title = title,y = "density", x = "trace") +
+				theme_ridge + guides(color = FALSE) + scale_y_discrete(expand = expand_scale(add = c(0.2, 2.5))) +
+				scale_fill_discrete(name = "Estimator:",labels = c("Maximum Likelihood", "Diagonalised Maximum Likelihood", "Ledoit-Wolf Shrinkage"))
+		traces[[i]] <- g
+	}
+
+nplots = 20
+ncol = 5
+nrow = 4
+eval(parse(text = paste0("quiet(grob <- grid_arrange_shared_legend(", paste0("traces", "[[", c(1:nplots), "]]", sep = '', collapse = ','), ",ncol =", ncol, ",nrow =", nrow, ", position = 'bottom',  
+													top=grid::textGrob(paste('KDEs of Population Trace',covariance_structure,' Covariance Estimates'), gp=grid::gpar(fontsize=12)),bottom=grid::textGrob('Red lines indicate true population covariance trace',gp = gpar(fontface = 3, fontsize = 9),hjust = 1,x = 1),plot = T))", sep = '')))
+	
+return(list('trace' = df_trace,'g' = grob))
+}
+```
+
+#### Identity - Density
+
+```{r trace ident dotproduct boxplot,cache = T}
+# Trace of identity matrix = p
+#trace_cov_structures$identity$identity
+trace_ident.ls <- plot_traces(trace_ml,trace_diag_ml,trace_LedoitWolf,0,400,"Identity")
+```
+
+***
+
+#### Linear - Density
+
+The trace of the linearly decaying covariance structure will simply be the pth triangular number, i.e. $\sum\limits_{k=1}^{n} k = \frac{n(n + 1)}{2} \ where \ n = p$.
+
+```{r trace linear dotproducts boxplot,cache = T}
+df <- setNames(as.data.frame(trace_cov_structures$linear$linear_decay),c("p=5","p=10","p=50","p=100","p=250"));rownames(df) <- c("Trace"); df %>% kable() %>% kable_styling() %>% add_header_above(header = c("True Linear Covariance Matrix Trace" = 6))
+
+trace_linear.ls <- plot_traces(trace_ml,trace_diag_ml,trace_LedoitWolf,400,800,"Linear")
+```
+
+***
+
+#### Exponential - Density
+
+We can see the trace of the covariance matrix with exponential decay rapidly approximates the size of the dimension within ~1.
+
+```{r trace exponential dotproducts boxplot,cache = T}
+df <- setNames(as.data.frame(trace_cov_structures$exponential$exp_decay),c("p=5","p=10","p=50","p=100","p=250"));rownames(df) <- c("Trace"); df %>% kable() %>% kable_styling() %>% add_header_above(header = c("True Exponential Covariance Matrix Trace" = 6))
+trace_expon.ls <- plot_traces(trace_ml,trace_diag_ml,trace_LedoitWolf,800,1200,"Exponential")
+```
+
+***
+
+#### Toeplitz - Density
+
+As the diagonals of the Toeplitz matrix = 1, the trace of the pth dimensional covariance matrix will simply = p.
+
+```{r trace toeplitz dotproducts boxplot,cache = T}
+df <- setNames(as.data.frame(trace_cov_structures$toeplitz$toeplitz),c("p=5","p=10","p=50","p=100","p=250"));rownames(df) <- c("Trace"); df %>% kable() %>% kable_styling() %>% add_header_above(header = c("True Toeplitz Covariance Matrix Trace" = 6))
+trace_toeplitz.ls <- plot_traces(trace_ml,trace_diag_ml,trace_LedoitWolf,1200,1600,"Toeplitz")
+```
+
+***
+
+### Principal Component of the Covariance Matrix 
+
+As the eigenvectors of a symmetric matrix are orthogonal [2] we can take the dot product of the principal component of the true covariance matrix and the principal component of the estimated covariance as measure of how well the eigenvectors are estimated. This is demonstrated below, by summing all possible eigenvector dot products for the toeplitz covariance matrix structure;
+
+```{r eigen normality example}
+l1 <- expand.grid(as.list(as.data.frame(eigen(cov_structures$toeplitz$toeplitz$`p=5`)$vec)),as.list(as.data.frame(eigen(cov_structures$toeplitz$toeplitz$`p=5`)$vec)))[,1]
+l2 <- expand.grid(as.list(as.data.frame(eigen(cov_structures$toeplitz$toeplitz$`p=5`)$vec)),as.list(as.data.frame(eigen(cov_structures$toeplitz$toeplitz$`p=5`)$vec)))[,2]
+sum(unlist(map2(l1,l2,dot)))
+```
+
+We get 5, which is the dot products of each eigenvector with itself (= 1). Hence, if the principal component of the estimated covariance matrix is off, the other eigenvectors will be as well.
+
+`eigen()` by default returns the left eigenvectors. As all our covariances structures are symmetric matrices, in principal the left and right eigenvectors of our estimates should be the same [1]. However, due to the asymmetry of the covariance matrix estimates, these will be different to the right eigenvectors.
+
+We check the estimation of the principal components by checking the angle between the true covariance matrix principal eigenvector and the estimated covariance matrix principal eigenvector;
+
+$$\frac{v^T\hat{v}}{\| v \| \| \hat{v} \|}$$
+
+In R the output of `eigen()` is normalised anyway - so the denominator of the normalised dot product will be one, and can hence be left out of the function. A dot product of zero indicates the vectors are perpendicular (poor estimation) and a dot product of one indicates the vectors overlap (good estimation). Dot products less than zero indicate a vector that is anti-correlated (to a maximum of -1, a vector that is parallel but opposite in direction to the true covariance principal eigenvector).
+
+```{r q3 normalised dot products,cache = TRUE}
+# Just need to look at first principal component (as if this is wrong, so are others)
+eigen_dot_product <- function(x,m) {
+		return(eigen(x)$vec[,1] %*% eigen(m)$vec[,1])
+    #return(pca(x)$rotation[,1] %*% pca(m)$rotation[,1])
+	}
+
+# Normalised Dot Products of Estimates (x) vs Ground Truth (m)
+ #mapply(FUN = eigen_dot_product,x = ml_cov_estimates[[i]],m = cov_structures)
+
+identity_cov_struct_flat <- rep(my_flatten(cov_structures[[1]]),80)
+linear_cov_struct_flat <- rep(my_flatten(cov_structures[[2]]),80)
+exponential_cov_struct_flat <- rep(my_flatten(cov_structures[[3]]),80)
+toeplitz_cov_struct_flat <- rep(my_flatten(cov_structures[[4]]),80)
+
+# ML
+identity_cov_flat <- my_flatten(ml_cov_estimates[[1]])
+dot_products_ml_identity <- map2(identity_cov_flat, identity_cov_struct_flat, eigen_dot_product)
+ 
+linear_cov_flat <- my_flatten(ml_cov_estimates[[2]])
+dot_products_ml_linear <- map2(linear_cov_flat, linear_cov_struct_flat, eigen_dot_product)
+ 
+exponential_cov_flat <- my_flatten(ml_cov_estimates[[3]])
+dot_products_ml_exponential <- map2(exponential_cov_flat, exponential_cov_struct_flat, eigen_dot_product)
+ 
+toeplitz_cov_flat <- my_flatten(ml_cov_estimates[[4]])
+dot_products_ml_toeplitz <- map2(toeplitz_cov_flat, toeplitz_cov_struct_flat, eigen_dot_product)
+ 
+ # Diag ML
+identity_cov_flat <- my_flatten(diag_ml_cov_estimates[[1]])
+dot_products_diag_ml_identity <- map2(identity_cov_flat, identity_cov_struct_flat, eigen_dot_product)
+ 
+linear_cov_flat <- my_flatten(diag_ml_cov_estimates[[2]])
+dot_products_diag_ml_linear <- map2(linear_cov_flat, linear_cov_struct_flat, eigen_dot_product)
+ 
+exponential_cov_flat <- my_flatten(diag_ml_cov_estimates[[3]])
+dot_products_diag_ml_exponential <- map2(exponential_cov_flat, exponential_cov_struct_flat, eigen_dot_product)
+ 
+toeplitz_cov_flat <- my_flatten(diag_ml_cov_estimates[[4]])
+dot_products_diag_ml_toeplitz <- map2(toeplitz_cov_flat, toeplitz_cov_struct_flat, eigen_dot_product)
+ 
+ # Ledoit-Wolf
+identity_cov_flat <- my_flatten(LedoitWolf_cov_estimates[[1]])
+dot_products_LedoitWolf_cov_estimates_identity <- map2(identity_cov_flat, identity_cov_struct_flat, eigen_dot_product)
+ 
+linear_cov_flat <- my_flatten(LedoitWolf_cov_estimates[[2]])
+linear_cov_struct_flat <- rep(my_flatten(cov_structures[[2]]),80)
+dot_products_LedoitWolf_cov_estimates_linear <- map2(linear_cov_flat, linear_cov_struct_flat, eigen_dot_product)
+ 
+exponential_cov_flat <- my_flatten(LedoitWolf_cov_estimates[[3]])
+dot_products_LedoitWolf_cov_estimates_exponential <- map2(exponential_cov_flat, exponential_cov_struct_flat, eigen_dot_product)
+ 
+toeplitz_cov_flat <- my_flatten(LedoitWolf_cov_estimates[[4]])
+dot_products_LedoitWolf_cov_estimates_toeplitz <- map2(toeplitz_cov_flat, toeplitz_cov_struct_flat, eigen_dot_product)
+ 
+```
+
+*Identity Covariance Matrix*
+
+At low n and p, there is a high degree of misestimation of the principal eigenvectors. As p increases, estimation of the principal eigenvector deteriorates, until the estimated vector and the true vector are consistently perpendicular (dot product of 0). In a minority of cases, the LW estimates corresponds closely with the true eigenvector. The LW estimator performs better with high p (except when $n \leq p$), and high n, as opposed to the ML/DML estimators, which perform poorly in all cases.
+
+*Linearly Decaying Covariance Matrix*
+
+The estimators perform poorly at high p and low n. The ML estimates are quite unstable, as indicated by the bi-modal KDEs
+
+*Exponentially Decaying Covariance Matrix*
+
+The DML and ML estimator accurately estimate the smallest eigenvalues, whilst the LW introduces a some bias. The is greatest where both n and p are low. For the largest eigenvalues the estimates perform similarly, being reasonably accurate in general.
+
+*Toeplitz Covariance Matrix*
+
+Here we see a striking divergence in performance. At both low n and p the estimators perform similarly. At high p and low n, the ML estimator under estimates the largest eigenvalues and the DML over estimates the largest eigenvalues. For the smallest eigenvalues, at high n and at high n and high p, the DML and LW estimators perform much better than the ML estimator. Across all combinations, LW estimates the eigenvalues best and the DML estimator performs roughly equal, or better than ML. ML tends to under estimate the largest eigenvalues and over estimate the smallest, whilst DML behaves oppositely.
+
+These observations can be summarised as follows;
+
+Smallest Eigenvalues
+  
+Rank    | Identity | Linear | Exponential | Toeplitz |
+--------| -------- |------- | ----------: |--------: |
+1st     | LW       | ML     | ML/DML      | LW       |
+2nd     | ML       | DML    |             | DML      |
+3rd     | DML      | LW     | LW          | ML       |
+
+### Dotproduct Density Plots {.tabset .tabset-fade .tabset-pills}
+
+```{r boxplots dotproduct,cache = T}
+# density plots
+# As some of the kernel density estimates overlapped nearly perfectly, decided to use ridgeline plots to clearly show all three estimators
+dp_diag_ml <- list('identity' = dot_products_diag_ml_identity,'linear' = dot_products_diag_ml_linear,'exponential' = dot_products_diag_ml_exponential,'toeplitz' = dot_products_diag_ml_toeplitz)
+dp_ml <- list('identity' = dot_products_ml_identity,'linear' = dot_products_ml_linear,'exponential' = dot_products_ml_exponential,'toeplitz' = dot_products_ml_toeplitz)
+dp_LedoitWolf <- list('identity' = dot_products_LedoitWolf_cov_estimates_identity,'linear' = dot_products_LedoitWolf_cov_estimates_linear,'exponential' = dot_products_LedoitWolf_cov_estimates_exponential,'toeplitz' = dot_products_LedoitWolf_cov_estimates_toeplitz)
+
+plot_dps <- function(x,y,z,start,end,covariance_structure) {
+	options(digits = 3, scipen = -2)
+	# x is estimator list of eigens
+	dps <- list()
+	
+	df_dp <- data.frame(matrix(NA, ncol=1, nrow=21)[-1]) # from SO
+	
+	s <- switch (covariance_structure,
+							 "Identity" = 1,
+							 "Linear" = 2,
+							 "Exponential" = 3,
+							 "Toeplitz" = 4
+	)
+	
+	dps <- list()
+	
+	for (i in 1:20) {
+		title <- names(my_flatten(x)[start+i])
+		title <- str_remove(pattern = str_extract(pattern = "[^.]*.[^.]*",string = title),string = title)
+		title <- substr(title,2,nchar(title))
+		df_x <- as.data.frame(do.call(rbind, my_flatten(x)[seq(start+i,end,by = 20)]))
+		df_y <- as.data.frame(do.call(rbind, my_flatten(y)[seq(start+i,end,by = 20)]))
+		df_z <- as.data.frame(do.call(rbind, my_flatten(z)[seq(start+i,end,by = 20)]))
+		
+		
+		colnames(df_x) <- 'dp_ML'
+		colnames(df_y) <- 'dp_D_ML'
+		colnames(df_z) <- 'dp_TP'
+		quiet(df_dp <- melt(cbind(df_x,df_y,df_z)))
+		g <- ggplot(data = df_dp) + 
+			stat_density_ridges(mapping = aes(x = value,y = variable,fill = variable),color = "black",quantile_lines = T,quantiles = 2) +
+			geom_vline(xintercept = 1,color = 'red') +
+			rug_ +
+			labs(title = title,y = "density", x = "dot products") +
+			theme_ridge + guides(color = FALSE) + scale_y_discrete(expand = expand_scale(add = c(0.2, 2.5))) +
+			scale_fill_discrete(name = "Estimator:",labels = c("Maximum Likelihood", "Diagonalised Maximum Likelihood", "Ledoit-Wolf Shrinkage"))
+		dps[[i]] <- g
+	}
+
+	nplots = 20
+	ncol = 5
+	nrow = 4
+	eval(parse(text = paste0("quiet(grob <- grid_arrange_shared_legend(", paste0("dps", "[[", c(1:nplots), "]]", sep = '', collapse = ','), ",ncol =", ncol, ",nrow =", nrow, ", position = 'bottom',  
+													top=grid::textGrob(paste('KDEs of Dot Products between Principal Eigenvector Estimate and True Eigenvector Estimate from ',covariance_structure, ' Covariance Structure'), gp=grid::gpar(fontsize=10)),bottom=grid::textGrob('Red lines indicate overlapping estimated and actual principal components',gp = gpar(fontface = 3, fontsize = 9),hjust = 1,x = 1),plot = T))", sep = '')))
+	
+	return(list('dp' = df_dp,'g' = grob))
+}
+``` 
+
+#### Identity - Density
+
+```{r dotproduct identity density,cache = T}
+dp_ident.ls <- plot_dps(dp_ml,dp_diag_ml,dp_LedoitWolf,0,400,"Identity")
+```
+
+#### Linear - Density
+
+```{r dotproduct linear density,cache = T}
+dp_linear.ls <- plot_dps(dp_ml,dp_diag_ml,dp_LedoitWolf,400,800,"Linear")
+```
+
+#### Exponential - Density
+
+```{r dotproduct exponential density,cache = T}
+dp_expon.ls <- plot_dps(dp_ml,dp_diag_ml,dp_LedoitWolf,800,1200,"Exponential")
+```
+
+#### Toeplitz - Density
+
+```{r dotproduct toeplitz density,cache = T}
+dp_toeplitz.ls <- plot_dps(dp_ml,dp_diag_ml,dp_LedoitWolf,1200,1600,"Toeplitz")
+```
+
+### Dotproduct Boxplots {.tabset .tabset-fade .tabset-pills}
+
+```{r dotproducts boxplots and density plots,cache = T}
+#---- Q3 Plots ----
+
+# boxplots
+options(digits = 5, scipen = -2)
+# As some of the kernel density estimates overlapped nearly perfectly, decided to use ridgeline plots to clearly show all three estimators
+dp_diag_ml <- list('identity' = dot_products_diag_ml_identity,'linear' = dot_products_diag_ml_linear,'exponential' = dot_products_diag_ml_exponential,'toeplitz' = dot_products_diag_ml_toeplitz)
+dp_ml <- list('identity' = dot_products_ml_identity,'linear' = dot_products_ml_linear,'exponential' = dot_products_ml_exponential,'toeplitz' = dot_products_ml_toeplitz)
+dp_LedoitWolf <- list('identity' = dot_products_LedoitWolf_cov_estimates_identity,'linear' = dot_products_LedoitWolf_cov_estimates_linear,'exponential' = dot_products_LedoitWolf_cov_estimates_exponential,'toeplitz' = dot_products_LedoitWolf_cov_estimates_toeplitz)
+
+plot_dps <- function(x,y,z,start,end,covariance_structure) {
+	options(digits = 3, scipen = -2)
+	# x is estimator list of eigens
+	dps <- list()
+	
+	df_dp <- data.frame(matrix(NA, ncol=1, nrow=21)[-1]) # from SO
+	
+	s <- switch (covariance_structure,
+							 "Identity" = 1,
+							 "Linear" = 2,
+							 "Exponential" = 3,
+							 "Toeplitz" = 4
+	)
+	
+	dps <- list()
+	
+	for (i in 1:20) {
+		title <- names(my_flatten(x)[start+i])
+		title <- str_remove(pattern = str_extract(pattern = "[^.]*.[^.]*",string = title),string = title)
+		title <- substr(title,2,nchar(title))
+		df_x <- as.data.frame(do.call(rbind, my_flatten(x)[seq(start+i,end,by = 20)]))
+		df_y <- as.data.frame(do.call(rbind, my_flatten(y)[seq(start+i,end,by = 20)]))
+		df_z <- as.data.frame(do.call(rbind, my_flatten(z)[seq(start+i,end,by = 20)]))
+		 
+		
+		colnames(df_x) <- 'dp_ML'
+		colnames(df_y) <- 'dp_D_ML'
+		colnames(df_z) <- 'dp_TP'
+		quiet(df_dp <- melt(cbind(df_x,df_y,df_z)))
+		g <- ggplot(data = df_dp) + 
+			geom_boxplot(mapping = aes(y = value,x = variable,fill = variable),color = alpha("black", 0.1),outlier.shape = NA,alpha = 0.5) +
+			geom_hline(yintercept = 1,color = 'red') +
+			geom_jitter(mapping = aes(y = value,x = variable,fill = variable,color = variable),width = 0.4,size = 0.5, alpha = 0.8) +
+			geom_rug(mapping = aes(x = value, colour = variable),show.legend = F,alpha = 1/2,sides = 'r') +
+			labs(title = title,y = "dot products", x = "estimator") + guides(color = FALSE) +
+			theme_light() + theme(axis.text.y = element_text(angle = 0, hjust = 1,  vjust = -0.5,size = 7),axis.text.x = element_blank(),axis.title = element_text(size = 7)) +	theme(plot.title = element_text(size = 7)) + 
+			scale_fill_discrete(name = "Estimator:",labels = c("Maximum Likelihood", "Diagonalised Maximum Likelihood", "Ledoit-Wolf Shrinkage")) + ylim(-1,1)
+		dps[[i]] <- g
+	}
+	
+	nplots = 20
+	ncol = 5
+	nrow = 4
+	eval(parse(text = paste0("quiet(grob <- grid_arrange_shared_legend(", paste0("dps", "[[", c(1:nplots), "]]", sep = '', collapse = ','), ",ncol =", ncol, ",nrow =", nrow, ", position = 'bottom',  
+													top=grid::textGrob(paste('Boxplots of Dot Products between Principal Eigenvector Estimate and True Eigenvector Estimate from ',covariance_structure, ' Covariance Structure'), gp=grid::gpar(fontsize=10)),plot = T))", sep = '')))
+	
+	return(list('dp' = df_dp,'g' = grob))
+}
+```
+
+#### Identity - Boxplot 
+
+```{r identity boxplot dotproduct,cache = T}
+dp_ident.ls <- plot_dps(dp_ml,dp_diag_ml,dp_LedoitWolf,0,400,"Identity")
+```
+
+#### Linear - Boxplot
+
+```{r linear boxplot dotproduct,cache = T}
+dp_linear.ls <- plot_dps(dp_ml,dp_diag_ml,dp_LedoitWolf,400,800,"Linear")
+```
+
+#### Exponential - Boxplot
+
+```{r exponential boxplot dotproduct,cache = T}
+dp_expon.ls <- plot_dps(dp_ml,dp_diag_ml,dp_LedoitWolf,800,1200,"Exponential")
+```
+
+#### Toeplitz - Boxplot
+
+```{r toeplitz boxplot dotproduct,cache = T}
+dp_toeplitz.ls <- plot_dps(dp_ml,dp_diag_ml,dp_LedoitWolf,1200,1600,"Toeplitz")
+```
+
+## Sum of Squared Errors 
+
+Here we take the sum of squared errors of $\Sigma - \hat{\Sigma}$ which is $trace[\Sigma - \hat{\Sigma})(\Sigma - \hat{\Sigma}]$. The larger the error, the greater the deviation of the estimated covariance matrix from the true covariance matrix. Clearly the lower bound for this measure is zero, with no upper bound.
+
+```{r q4 sse,cache = TRUE}
+ SSE_cov <- function(x,m) {
+ 	return(tr((x-m) %*% (x-m)))
+ }
+ 
+ # ML
+ identity_cov_flat <- my_flatten(ml_cov_estimates[[1]])
+ identity_cov_struct_flat <- rep(my_flatten(cov_structures[[1]]),80)
+ SSE_ml_identity <- map2(identity_cov_flat, identity_cov_struct_flat, SSE_cov)
+ 
+ linear_cov_flat <- my_flatten(ml_cov_estimates[[2]])
+ linear_cov_struct_flat <- rep(my_flatten(cov_structures[[2]]),80)
+ SSE_ml_linear <- map2(identity_cov_flat, identity_cov_struct_flat, SSE_cov)
+ 
+ exponential_cov_flat <- my_flatten(ml_cov_estimates[[3]])
+ exponential_cov_struct_flat <- rep(my_flatten(cov_structures[[3]]),80)
+ SSE_ml_exponential <- map2(exponential_cov_flat, exponential_cov_struct_flat, SSE_cov)
+ 
+ toeplitz_cov_flat <- my_flatten(ml_cov_estimates[[4]])
+ toeplitz_cov_struct_flat <- rep(my_flatten(cov_structures[[4]]),80)
+ SSE_ml_toeplitz <- map2(toeplitz_cov_flat, toeplitz_cov_struct_flat, SSE_cov)
+ 
+ # Diag ML
+ identity_cov_flat <- my_flatten(diag_ml_cov_estimates[[1]])
+ identity_cov_struct_flat <- rep(my_flatten(cov_structures[[1]]),80)
+ SSE_diag_ml_identity <- map2(identity_cov_flat, identity_cov_struct_flat, SSE_cov)
+ 
+ linear_cov_flat <- my_flatten(diag_ml_cov_estimates[[2]])
+ linear_cov_struct_flat <- rep(my_flatten(cov_structures[[2]]),80)
+ SSE_diag_ml_linear <- map2(identity_cov_flat, identity_cov_struct_flat, SSE_cov)
+ 
+ exponential_cov_flat <- my_flatten(diag_ml_cov_estimates[[3]])
+ exponential_cov_struct_flat <- rep(my_flatten(cov_structures[[3]]),80)
+ SSE_diag_ml_exponential <- map2(exponential_cov_flat, exponential_cov_struct_flat, SSE_cov)
+ 
+ toeplitz_cov_flat <- my_flatten(diag_ml_cov_estimates[[4]])
+ toeplitz_cov_struct_flat <- rep(my_flatten(cov_structures[[4]]),80)
+ SSE_diag_ml_toeplitz <- map2(toeplitz_cov_flat, toeplitz_cov_struct_flat, SSE_cov)
+ 
+ # Ledoit-Wolf
+ identity_cov_flat <- my_flatten(LedoitWolf_cov_estimates[[1]])
+ identity_cov_struct_flat <- rep(my_flatten(cov_structures[[1]]),80)
+ SSE_LedoitWolf_cov_estimates_identity <- map2(identity_cov_flat, identity_cov_struct_flat, SSE_cov)
+ 
+ linear_cov_flat <- my_flatten(LedoitWolf_cov_estimates[[2]])
+ linear_cov_struct_flat <- rep(my_flatten(cov_structures[[2]]),80)
+ SSE_LedoitWolf_cov_estimates_linear <- map2(identity_cov_flat, identity_cov_struct_flat, SSE_cov)
+ 
+ exponential_cov_flat <- my_flatten(LedoitWolf_cov_estimates[[3]])
+ exponential_cov_struct_flat <- rep(my_flatten(cov_structures[[3]]),80)
+ SSE_LedoitWolf_cov_estimates_exponential <- map2(exponential_cov_flat, exponential_cov_struct_flat, SSE_cov)
+ 
+ toeplitz_cov_flat <- my_flatten(LedoitWolf_cov_estimates[[4]])
+ toeplitz_cov_struct_flat <- rep(my_flatten(cov_structures[[4]]),80)
+ SSE_LedoitWolf_cov_estimates_toeplitz <- map2(toeplitz_cov_flat, toeplitz_cov_struct_flat, SSE_cov)
+ 
+```
+
+### SSE Density Plots {.tabset .tabset-fade .tabset-pills}
+
+```{r sse plots,cache = T}
+#---- Q4 Plots ----
+ 
+# As some of the kernel density estimates overlapped nearly perfectly, decided to use ridgeline plots to clearly show all three estimators
+sse_diag_ml <- list('identity' = SSE_diag_ml_identity,'linear' = SSE_diag_ml_linear,'exponential' = SSE_diag_ml_exponential,'toeplitz' = SSE_diag_ml_toeplitz)
+sse_ml <- list('identity' = SSE_ml_identity,'linear' = SSE_ml_linear,'exponential' = SSE_ml_exponential,'toeplitz' = SSE_ml_toeplitz)
+sse_LedoitWolf <- list('identity' = SSE_LedoitWolf_cov_estimates_identity,'linear' = SSE_LedoitWolf_cov_estimates_linear,'exponential' = SSE_LedoitWolf_cov_estimates_exponential,'toeplitz' = SSE_LedoitWolf_cov_estimates_toeplitz)
+
+plot_sses <- function(x,y,z,start,end,covariance_structure) {
+	options(digits = 3, scipen = -2)
+	# x is estimator list of eigens
+	sses <- list()
+	
+	df_sse <- data.frame(matrix(NA, ncol=1, nrow=21)[-1]) # from SO
+	
+	s <- switch (covariance_structure,
+							 "Identity" = 1,
+							 "Linear" = 2,
+							 "Exponential" = 3,
+							 "Toeplitz" = 4
+	)
+	
+	sses <- list()
+	
+	for (i in 1:20) {
+		title <- names(my_flatten(x)[start+i])
+		title <- str_remove(pattern = str_extract(pattern = "[^.]*.[^.]*",string = title),string = title)
+		title <- substr(title,2,nchar(title))
+		#title <- substr(title,17,title) # trim off "identity.identity"
+		df_x <- as.data.frame(do.call(rbind, my_flatten(x)[seq(start+i,end,by = 20)]))
+		df_y <- as.data.frame(do.call(rbind, my_flatten(y)[seq(start+i,end,by = 20)]))
+		df_z <- as.data.frame(do.call(rbind, my_flatten(z)[seq(start+i,end,by = 20)]))
+		
+		
+		colnames(df_x) <- 'sse_ML'
+		colnames(df_y) <- 'sse_D_ML'
+		colnames(df_z) <- 'sse_TP'
+		quiet(df_sse <- melt(cbind(df_x,df_y,df_z)))
+		g <- ggplot(data = df_sse) + 
+			#geom_density(mapping = aes(x = value,color = variable,fill = variable),alpha = 0.5) +
+			#geom_density_ridges2(mapping = aes(x = value,y = variable,color = variable,fill = variable)) +
+			ridges_+
+			rug_ +
+			labs(title = title,y = "density", x = "sse") +
+			theme_ridge + guides(color = FALSE) + scale_y_discrete(expand = expand_scale(add = c(0.2, 2.5))) +
+			scale_fill_discrete(name = "Estimator:",labels = c("Maximum Likelihood", "Diagonalised Maximum Likelihood", "Ledoit-Wolf Shrinkage"))
+		sses[[i]] <- g
+	}
+
+	nplots = 20
+	ncol = 5
+	nrow = 4
+	eval(parse(text = paste0("quiet(grob <- grid_arrange_shared_legend(", paste0("sses", "[[", c(1:nplots), "]]", sep = '', collapse = ','), ",ncol =", ncol, ",nrow =", nrow, ", position = 'bottom',  
+													top=grid::textGrob(paste('KDEs of Covariance Estimate SSE from',covariance_structure,' Covariance Structure'), gp=grid::gpar(fontsize=12)),plot = T))", sep = '')))
+	
+	#quiet(grob <- grid_arrange_shared_legend(sses[[1]],sses[[1]],top = "hello")) # test success
+	
+	#quiet(grob <- grid_arrange_shared_legend_plotlist(plotlist = sses,ncol = 5,top = "hello"))#,bottom = b_)) #grid.arrange(grobs = sses,ncol = 5) ,top = "test"
+	
+	return(list('sse' = df_sse,'g' = grob))
+}
+```
+
+#### Identity - Density
+
+```{r sse identity density,cache = T}
+sse_ident.ls <- plot_sses(sse_ml,sse_diag_ml,sse_LedoitWolf,0,400,"Identity")
+```
+
+***
+
+#### Linear - Density
+
+```{r sse linear density,cache = T}
+sse_linear.ls <- plot_sses(sse_ml,sse_diag_ml,sse_LedoitWolf,400,800,"Linear")
+```
+
+***
+
+#### Exponential - Density
+
+```{r sse exponential density,cache = T}
+sse_expon.ls <- plot_sses(sse_ml,sse_diag_ml,sse_LedoitWolf,800,1200,"Exponential")
+```
+
+***
+
+#### Toeplitz - Density
+
+```{r sse toeplitz density,cache = T}
+sse_toeplitz.ls <- plot_sses(sse_ml,sse_diag_ml,sse_LedoitWolf,1200,1600,"Toeplitz")
+```
+
+***
+
+## Estimate Stability {.tabset .tabset-fade .tabset-pills}
+
+To assess the stability of the covariance matrix estimates, we calculate the variance of the sum of squared errors. As the range of these variances was very large, we take the log of them before plotting. We also display the raw error variances for reference.
+
+Hence, the negative values (in blue) represent low error variances (less than 1), whilst positive values represent higher variances.
+
+```{r q5 estimate stability}
+# Multiplots with heatmap turns out to be impossible with par() and grid.arrange() - have to drop down to very low level graphics or switch to ggplot2, so used SO code
+
+error_variance <- function(x,matrix_out = T,plot = T, title = "") {
+df_var <-data.frame(Parameters = names(unlist(x)), Errors = unname(unlist(x)))
+if (matrix_out) { 
+   m <- matrix(by(df_var$Errors,df_var$Parameters,var)[unique(names(unlist(x)))],nrow = 4,byrow = T)
+   rownames(m) <- c("n=p","n=p log(p)","n=5p log(p)","n=10p log(p)")
+   colnames(m) <- c("p=5","p=10","p=50","p=100","p=250")
+  }
+if(!matrix_out) { print(by(df_var$Errors,df_var$Parameters,var)[unique(names(unlist(x)))]) }
+
+if (plot && matrix_out) {
+
+}
+  return('m' = m)
+}
+
+plot_heats <- function(list,title) {
+arr <- list
+
+grab_grob <- function(){
+  grid.echo()
+  grid.grab()
+}
+
+library(gplots)
+gl <- lapply(1:4, function(i){
+heatmap.2(log(arr[[i]]), Rowv=NULL,Colv=NULL,
+          col = rev(rainbow(20*10, start = 0/6, end = 4/6)),
+          scale="none",
+          margins=c(4,4), # ("margin.Y", "margin.X")
+          symkey=FALSE,
+          symbreaks=FALSE,
+          dendrogram='none',
+          density.info='histogram',
+          denscol="black",
+          keysize=1,
+          #( "bottom.margin", "left.margin", "top.margin", "left.margin" )
+          key.par=list(mar=c(3.5,0,3,0)),
+          # lmat -- added 2 lattice sections (5 and 6) for padding
+          lmat=rbind(c(4, 4, 2), c(5, 1, 3)), lhei=c(2.5, 5), lwid=c(1, 10, 1),
+          srtRow = 45,srtCol = 45,
+          key.title = title[[i]],
+          tracecol="#303030",
+          trace = "both",
+          cellnote = round(log(arr[[i]]),2),
+          notecol = "black",
+          cexRow = 0.8,
+          cexCol = 0.8)
+  #grab_grob()
+})
+
+#grid.newpage()
+#grid.arrange(grobs=gl, ncol=2, clip=FALSE,plot = F,heights = c(5,5))
+}
+```
+
+### ML - Heatmaps (log)
+
+```{r ml heatmaps}
+hm <- list(
+'identity' = error_variance(SSE_ml_identity),
+'linear' = error_variance(SSE_ml_linear),
+'exponential' = error_variance(SSE_ml_exponential),
+'toeplitz' = error_variance(SSE_ml_toeplitz)
+)
+title <- list()
+title[[1]] <- "ML / Identity"
+title[[2]] <- "ML / Linear"
+title[[3]] <- "ML / Exponential"
+title[[4]] <- "ML / Toeplitz"
+plot_heats(hm,title)
+
+hm <- lapply(hm,round,2)
+#for (i in 1:4) { # fails to print kables
+hm[[1]] %>% round(2) %>% kable() %>% kable_styling() %>% add_header_above(header = c("Identity" = 6))
+hm[[2]] %>% round(2) %>% kable() %>% kable_styling() %>% add_header_above(header = c("Linear" = 6))
+hm[[3]] %>% round(2) %>% kable() %>% kable_styling() %>% add_header_above(header = c("Exponential " = 6))
+hm[[4]] %>% round(2) %>% kable() %>% kable_styling() %>% add_header_above(header = c("Toeplitz" = 6))
+#}
+
+#eval(title[[i]])
+```
+
+***
+
+### Diag ML - Heatmaps (log)
+
+```{r diag ml heatmaps}
+hm <- list(
+'identity' = error_variance(SSE_diag_ml_identity),
+'linear' = error_variance(SSE_diag_ml_linear),
+'exponential' = error_variance(SSE_diag_ml_exponential),
+'toeplitz' = error_variance(SSE_diag_ml_toeplitz)
+)
+
+title <- list()
+title[[1]] <- "Diag ML / Identity"
+title[[2]] <- "Diag ML / Linear"
+title[[3]] <- "Diag ML / Exponential"
+title[[4]] <- "Diag ML / Toeplitz"
+plot_heats(hm,title)
+
+hm <- lapply(hm,round,2)
+#for (i in 1:4) { # fails to print kables
+hm[[1]] %>% round(2) %>% kable() %>% kable_styling() %>% add_header_above(header = c("Identity" = 6))
+hm[[2]] %>% round(2) %>% kable() %>% kable_styling() %>% add_header_above(header = c("Linear" = 6))
+hm[[3]] %>% round(2) %>% kable() %>% kable_styling() %>% add_header_above(header = c("Exponential " = 6))
+hm[[4]] %>% round(2) %>% kable() %>% kable_styling() %>% add_header_above(header = c("Toeplitz" = 6))
+#}
+
+#eval(title[[i]])
+```
+
+***
+
+### Ledoit-Wolf - Heatmaps (log)
+
+```{r lw heatmaps}
+hm <- list(
+'identity' = error_variance(SSE_LedoitWolf_cov_estimates_identity),
+'linear' = error_variance(SSE_LedoitWolf_cov_estimates_linear),
+'exponential' = error_variance(SSE_LedoitWolf_cov_estimates_exponential),
+'toeplitz' = error_variance(SSE_LedoitWolf_cov_estimates_toeplitz)
+)
+
+title <- list()
+title[[1]] <- "L-W / Identity"
+title[[2]] <- "L-W / Linear"
+title[[3]] <- "L-W / Exponential"
+title[[4]] <- "L-W / Toeplitz"
+plot_heats(hm,title)
+
+hm <- lapply(hm,round,2)
+#for (i in 1:4) { # fails to print kables
+hm[[1]] %>% round(2) %>% kable() %>% kable_styling() %>% add_header_above(header = c("Identity" = 6))
+hm[[2]] %>% round(2) %>% kable() %>% kable_styling() %>% add_header_above(header = c("Linear" = 6))
+hm[[3]] %>% round(2) %>% kable() %>% kable_styling() %>% add_header_above(header = c("Exponential" = 6))
+hm[[4]] %>% round(2) %>% kable() %>% kable_styling() %>% add_header_above(header = c("Toeplitz" = 6))
+#}
+
+#eval(title[[i]])
+```
+
+***
+
+## Numerical Summaries
+
+It's relatively meaningless to plot whole data set for the eigenvalues and eigenvectors without a visual reference to the original covariance structure eigenvalues and eigenvectors. However, we can get a sense of the overall performance of the estimators by comparing them across all combinations of the covariance structures.  
+
+```{r summary plots,cache = T}
+#---- Summary Plots ---- 
+n_sort_list_summary <- function(x) { return(unlist(x)[naturalorder(names(unlist(x)))]) }
+#unique(names(unlist(dot_products_LedoitWolf_cov_estimates_toeplitz)[naturalorder(names(unlist(dot_products_LedoitWolf_cov_estimates_toeplitz)))]))
+
+# Q3
+par(mfrow = c(3,4))
+plot(n_sort_list_summary(dot_products_ml_identity),bg = 'red',main = "Identity - ML",pch = 21,ylab = "Dot Products - ML")
+plot(n_sort_list_summary(dot_products_ml_linear),bg = 'blue',main = "Linear - ML",pch = 21,ylab = "Dot Products - ML")
+plot(n_sort_list_summary(dot_products_ml_exponential),bg = 'purple',main = "Exponential - ML",pch = 21,ylab = "Dot Products - ML")
+plot(n_sort_list_summary(dot_products_ml_toeplitz),bg = 'green',main = "Toeplitz - ML",pch = 21,ylab = "Dot Products - ML")
+plot(n_sort_list_summary(dot_products_diag_ml_identity),bg = 'red',main = "Identity - Diag ML",pch = 21,ylab = "Dot Products - Diag ML")
+plot(n_sort_list_summary(dot_products_diag_ml_linear),bg = 'blue',main = "Linear - Diag ML",pch = 21,ylab = "Dot Products - Diag ML")
+plot(n_sort_list_summary(dot_products_diag_ml_exponential),bg = 'purple',main = "Exponential - Diag ML",pch = 21,ylab = "Dot Products - Diag ML")
+plot(n_sort_list_summary(dot_products_diag_ml_toeplitz),bg = 'green',main = "Toeplitz - Diag ML",pch = 21,ylab = "Dot Products - Diag ML")
+plot(n_sort_list_summary(dot_products_LedoitWolf_cov_estimates_identity),bg = 'red',main = "Identity - LW",pch = 21,ylab = "Dot Products - LW")
+plot(n_sort_list_summary(dot_products_LedoitWolf_cov_estimates_linear),bg = 'blue',main = "Linear - LW",pch = 21,ylab = "Dot Products  - LW")
+plot(n_sort_list_summary(dot_products_LedoitWolf_cov_estimates_exponential),bg = 'purple',main = "Exponential - LW",pch = 21,ylab = "Dot Products  - LW")
+plot(n_sort_list_summary(dot_products_LedoitWolf_cov_estimates_toeplitz),bg = 'green',main = "Toeplitz - LW",pch = 21,ylab = "Dot Products  - LW")  
+
+# Q4
+par(mfrow = c(3,4))
+plot(n_sort_list_summary(SSE_ml_identity),bg = 'red',main = "Identity - ML",pch = 21,ylab = "SSE - ML")
+plot(n_sort_list_summary(SSE_ml_linear),bg = 'blue',main = "Linear - ML",pch = 21,ylab = "SSEs - ML")
+plot(n_sort_list_summary(SSE_ml_exponential),bg = 'purple',main = "Exponential - ML",pch = 21,ylab = "SSEs - ML")
+plot(n_sort_list_summary(SSE_ml_toeplitz),bg = 'green',main = "Toeplitz - ML",pch = 21,ylab = "SSEs - ML")
+plot(n_sort_list_summary(SSE_diag_ml_identity),bg = 'red',main = "Identity - Diag ML",pch = 21,ylab = "SSEs - Diag ML")
+plot(n_sort_list_summary(SSE_diag_ml_linear),bg = 'blue',main = "Linear - Diag ML",pch = 21,ylab = "SSEs - Diag ML")
+plot(n_sort_list_summary(SSE_diag_ml_exponential),bg = 'purple',main = "Exponential - Diag ML",pch = 21,ylab = "SSEs - Diag ML")
+plot(n_sort_list_summary(SSE_diag_ml_toeplitz),bg = 'green',main = "Toeplitz - Diag ML",pch = 21,ylab = "SSEs - Diag ML")
+plot(n_sort_list_summary(SSE_LedoitWolf_cov_estimates_identity),bg = 'red',main = "Identity - LW",pch = 21,ylab = "SSEs - LW")
+plot(n_sort_list_summary(SSE_LedoitWolf_cov_estimates_linear),bg = 'blue',main = "Linear - LW",pch = 21,ylab = "SSEs  - LW")
+plot(n_sort_list_summary(SSE_LedoitWolf_cov_estimates_exponential),bg = 'purple',main = "Exponential - LW",pch = 21,ylab = "SSEs  - LW")
+plot(n_sort_list_summary(SSE_LedoitWolf_cov_estimates_toeplitz),bg = 'green',main = "Toeplitz - LW",pch = 21,ylab = "SSEs  - LW")  
+```
+
+```{r numerical summaries}
+#---- Numerical Summaries ----
+to_mat <- function(x) { summary(as.numeric(unlist(x))) }
+
+df_nm <- as.data.frame(cbind(c("Identity","Linear","Exponential","Toeplitz"),
+			rbind(to_mat(dot_products_ml_identity),
+						to_mat(dot_products_ml_linear),
+						to_mat(dot_products_ml_exponential),
+						to_mat(dot_products_ml_toeplitz))))
+colnames(df_nm)[1] <- "Covariance Structure"
+
+df_nm[,2:7] <- sapply(X = df_nm[,2:7],FUN = as.numeric)
+df_nm[,2:7] <- round(df_nm[,2:7],2)
+
+df_nm %>% kable() %>% kable_styling() %>% add_header_above(header = c("Numerical Summaries: Dot Products" = 7)) 
+```
+
+# Discussion
+
+In terms of trace estimation, it's possible not enough replications of each parameter combination (in our case, 20) were performed to differentiate the properties of the different estimators.
+
+The maximum likelihood estimator to have a lot of error when the dimensionality of the true matrix is large, relative to the sample size, subsequently leading to error in optimization processes that rely on this estimates from this estimator. (Ledoit & Wolf, 2003). It is also not invertible when $n \leqq p$. It has the advantage of being easy to compute and unbiased.
+
+In contrast, the Ledoit-Wolf estimator handles estimation of high dimensional covariance matrices far better than maximum likelihood, especially at high values of p.  
+
+# Conclusion
+
+
+
+## References
+
+### Primary Literature
+
+Additional Measures of Dispersion. (n.d.). Retrieved from https://onlinecourses.science.psu.edu/stat505/book/export/html/645.
+
+Bai, J., & Shi, S. (2011). Estimating High Dimensional Covariance Matrices and Its Applications. Columbia University. https://doi.org/10.7916/D8RJ4SGP
+
+Coates, A., & Ng, A. Y. (2012). Learning Feature Representations with K-Means. In Lecture Notes in Computer Science (pp. 561-580). Springer Berlin Heidelberg. https://doi.org/10.1007/978-3-642-35289-8_30
+
+Kessy, A., Lewin, A., & Strimmer, K. (2018). Optimal Whitening and Decorrelation. The American Statistician, 72(4), 309-314. https://doi.org/10.1080/00031305.2016.1277159
+
+Ledoit, O., & Wolf, M. (2004). Honey, I Shrunk the Sample Covariance Matrix. The Journal of Portfolio Management, 30(4), 110–119. doi: 10.3905/jpm.2004.110
+
+Ledoit, O., & Wolf, M. (2004). A well-conditioned estimator for large-dimensional covariance matrices. Journal of Multivariate Analysis, 88(2), 365-411. doi: 10.1016/s0047-259x(03)00096-4
+
+Mukherjee, B. N., & Maiti, S. S. (1988). On some properties of positive definite toeplitz matrices and their possible applications. Linear Algebra and Its Applications, 102, 211–240. doi: 10.1016/0024-3795(88)90326-6
+
+Pearson, K. (1901). LIII. On lines and planes of closest fit to systems of points in space. The London, Edinburgh, and Dublin Philosophical Magazine and Journal of Science, 2(11), 559-572. doi: 10.1080/14786440109462720
+
+Rao, K. R., & Yip, P. C. (2001). The Karhunen-Lo?ve Transform in The transform and data compression handbook (pp. 20-55). Boca Raton, FL: CRC Press.
+
+Reris, R., & Brooks, J. P. (2015). Principal Component Analysis and Optimization: A Tutorial. In Operations Research and Computing: Algorithms and Software for Analytics (pp. 212-225). INFORMS. https://doi.org/10.1287/ics.2015.0016
+
+Serra, A., Coretto, P., Fratello, M., & Tagliaferri, R. (2017). Robust and sparse correlation matrix estimation for the analysis of high-dimensional genomics data. Bioinformatics, 34(4), 625-634. https://doi.org/10.1093/bioinformatics/btx642
+
+### Supplementary Material
+
+[1] McIntosh L.,Hardcastle L. (2017). *NBIO 228: Math Tools for Neuroscience, Linear Algebra: Part II* [PowerPoint slides]. Retrieved from https://web.stanford.edu/class/nbio228-01/lectures/
+
+[2] Department of Mathematics, Oregon State University (1996). *Eigenvalues and Eigenvectors* [webpage]. Retrieved from https://math.oregonstate.edu/home/programs/undergrad/CalculusQuestStudyGuides/vcalc/eigen/eigen.html
+
+### Hat tips (used code)
+
+Flattening named lists (Jack Brookes):
+https://stackoverflow.com/questions/49252400/r-purrr-flatten-list-of-named-lists-to-list-and-keep-names 
+
+Using do call (Sameer):
+https://stackoverflow.com/questions/6496811/how-to-pass-a-list-to-a-function-in-r
+
+Parse eval trick (Mark):
+https://stackoverflow.com/questions/55462693/multipanel-ggplot-from-a-list-with-grid-arrange-shared-legend
+
+Code folding for plots (Martin Schmelzer):
+https://stackoverflow.com/questions/37755037/how-to-add-code-folding-to-output-chunks-in-rmarkdown-html-documents
+
+Using gridGraphics to arrange heatmap.2 plots (baptiste):
+https://stackoverflow.com/questions/13081310/combining-multiple-complex-plots-as-panels-in-a-single-figure
+
+Elementwise combination of two lists (Matthew Plourde):
+https://stackoverflow.com/questions/13018173/elementwise-combination-of-two-lists-in-r

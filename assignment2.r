@@ -1,11 +1,14 @@
 library(MASS) # Generation of samples from multivariate normal distributions
 library(corpcor) # Ledoit Wolf shrinkage estimator
+library(nlshrink) # 2nd ver Ledoit Wolf shrinkage estimator
 library(ddpcr) # Gets cov.shrink() to STFU
 library(purrr) # calculating dot products by mapping sample matrices to covariance
-library(ggplot2) # customised graphics
-library(gridExtra) # arranging arrays of ggplots
-library(reshape2)
-library(stringr)
+library(ggplot2);library(ggridges) # customised graphics
+library(grid);library(gridExtra) # arranging arrays of ggplots
+library(reshape2) # melting dataframes
+library(stringr) # str_extract
+library(lemon) # grid_arrange_shared_legend()
+library(naturalsort) #
 
 ## Preliminary: generate samples from a multivariate normal distribution with mean vector = 0 in each element and specified covariance matrices
 ## Covariance matrices take 4 forms: identity, identity linear decaying, identity exponentially decaying and toeplitz
@@ -97,7 +100,7 @@ res_rep_sigma4 <- replicate(n_rep, gen_samples(n = sample_size,mean_vectors = me
 
 ## The objective now is to investigate the estimation of the population covariance structure of the independant variables from which these matrices are sampled
 ## The population covariance matrix structure is known
-## Here, we use three types of estimators: maximum likelihood with known mean, a diagonal estimator of only variances, and the Ledoit-Wolf shrinkage estimator
+## Here, we use three types of estimators: maximum likelihood with known mean, a diagonal estimator of only variances, and the Ledoit-Wolf Shrinkage shrinkage estimator
 
 ml_cov <- function(m) {
 # classic maximum likelihood estimator
@@ -185,6 +188,8 @@ matrices <- list(`identity` = res_rep_sigma1,
 # generating covariance matrice estimates for each matrix, using each type of estimator - this results in 6,000 matrices 
 ml_cov_estimates <- rapply(matrices, ml_cov, how="replace")
 diag_ml_cov_estimates <- rapply(matrices, diag_ml_cov, how="replace")
+saveRDS(diag_ml_cov_estimates,"ml_cov_estimates.rds")
+saveRDS(ml_cov_estimates,"diag_ml_cov_estimates.rds")
 #LedoitWolf_cov_estimates <- rapply(matrices, LedoitWolf_cov_estimate, how="replace",return_shrink = F) 
 # due to computational time involved, estimating on a seperate machine - FAILED
 # works (slowly on individual matrices) but fails when recursively applied over list...
@@ -192,8 +197,6 @@ diag_ml_cov_estimates <- rapply(matrices, diag_ml_cov, how="replace")
 # quiet(LedoitWolf_cov_estimates <- rapply(matrices, cov.shrink, how="replace")) # WAY faster
 # LW Estimates calculated on laptop overnight - saved as RDS, imported here
 LedoitWolf_cov_estimates <- readRDS("lw_est.rds")
-
-
 
 #---- Part 3: Assessing Covariance Estimates  ----
 
@@ -261,8 +264,6 @@ trace_LedoitWolf <- rapply(LedoitWolf_cov_estimates,tr, how="replace")
 
 trace_cov_structures <- rapply(cov_structures,tr, how="replace")
 
-
-
 #---- Question 3: How well are the principal components (eigenvectors) of the covariance matrix estimated? ----
 
 # Just need to look at first principal component (as if this is wrong, so are others)
@@ -274,7 +275,6 @@ eigen_dot_product <- function(x,m) {
 
 # Normalised Dot Products of Estimates (x) vs Ground Truth (m)
 
-	
 # https://stackoverflow.com/questions/49252400/r-purrr-flatten-list-of-named-lists-to-list-and-keep-names
 my_flatten <- function (x, use.names = TRUE, classes = "ANY") 
 {
@@ -328,7 +328,7 @@ my_flatten <- function (x, use.names = TRUE, classes = "ANY")
  toeplitz_cov_struct_flat <- rep(my_flatten(cov_structures[[4]]),80)
  dot_products_diag_ml_toeplitz <- map2(toeplitz_cov_flat, toeplitz_cov_struct_flat, eigen_dot_product)
  
- # Ledoit-Wolf
+ # Ledoit-Wolf Shrinkage
  identity_cov_flat <- my_flatten(LedoitWolf_cov_estimates[[1]])
  identity_cov_struct_flat <- rep(my_flatten(cov_structures[[1]]),80)
  dot_products_LedoitWolf_cov_estimates_identity <- map2(identity_cov_flat, identity_cov_struct_flat, eigen_dot_product)
@@ -387,7 +387,7 @@ my_flatten <- function (x, use.names = TRUE, classes = "ANY")
  toeplitz_cov_struct_flat <- rep(my_flatten(cov_structures[[4]]),80)
  SSE_diag_ml_toeplitz <- map2(toeplitz_cov_flat, toeplitz_cov_struct_flat, SSE_cov)
  
- # Ledoit-Wolf
+ # Ledoit-Wolf Shrinkage
  identity_cov_flat <- my_flatten(LedoitWolf_cov_estimates[[1]])
  identity_cov_struct_flat <- rep(my_flatten(cov_structures[[1]]),80)
  SSE_LedoitWolf_cov_estimates_identity <- map2(identity_cov_flat, identity_cov_struct_flat, SSE_cov)
@@ -404,16 +404,39 @@ my_flatten <- function (x, use.names = TRUE, classes = "ANY")
  toeplitz_cov_struct_flat <- rep(my_flatten(cov_structures[[4]]),80)
  SSE_LedoitWolf_cov_estimates_toeplitz <- map2(toeplitz_cov_flat, toeplitz_cov_struct_flat, SSE_cov)
  
- #---- Question 5: How stable are the estimates? ----
+#---- Question 5: How stable are the estimates? ----
  
+# A casual survey of the summary statistics of the estimates against the ground truth does not reveal much; hence a more in depth visuali inspection is needed.
  
+ summary(rapply(trace_ml,identity))
+ summary(rapply(trace_diag_ml,identity))
+ summary(rapply(trace_LedoitWolf,identity))
+ summary(rapply(trace_cov_structures,identity))
  
- #---- Plotting ----
+#---- Plotting ----
+ 
+#---- Q1 Plots ----
+
+# defining common ggproto objects to reduce verbosity 
+rug_ <- geom_rug(mapping = aes(x = value, colour = variable),show.legend = F,alpha = 1/2) 
+ridges_ <- stat_density_ridges(mapping = aes(x = value,y = variable,fill = variable),color = "black",quantile_lines = T,quantiles = 2)
+theme_ridge <- theme_light() + theme(axis.text.x = element_text(angle = 0, hjust = 1,  vjust = -0.5,size = 7),axis.text.y = element_blank(),axis.title = element_text(size = 7)) +	theme(plot.title = element_text(size = 7))
+# + guides(color = FALSE) + scale_y_discrete(expand = expand_scale(add = c(0.2, 2.5)))
  
  # ML,D-ML,LW Plotting Function
+
 plot_eigens <- function(x,y,z,start,end,covariance_structure,density = F) {
+	
+	s <- switch (covariance_structure,
+							 "Identity" = 1,
+							 "Linear" = 2,
+							 "Exponential" = 3,
+							 "Toeplitz" = 4
+	)
+	
+	ref <- my_flatten(eigen_range_cov_structures[[s]])
+	
 	options(digits = 3, scipen = -2)
-	# x is estimator list of eigens
 	 eigen_smallest <- list()
 	 eigen_biggest <- list()
 	 df_small <- data.frame(matrix(NA, ncol=1, nrow=21)[-1]) # from SO
@@ -421,7 +444,7 @@ plot_eigens <- function(x,y,z,start,end,covariance_structure,density = F) {
 	 for (i in 1:20) {
 	 	title <- names(my_flatten(x)[start+i])
 	 	title <- str_remove(pattern = str_extract(pattern = "[^.]*.[^.]*",string = title),string = title)
-	 	#title <- substr(title,17,title) # trim off "identity.identity"
+	 	title <- substr(title,2,nchar(title))
 	 	df_x <- as.data.frame(do.call(rbind, my_flatten(x)[seq(start+i,end,by = 20)]))
 	 	df_y <- as.data.frame(do.call(rbind, my_flatten(y)[seq(start+i,end,by = 20)]))
 	 	df_z <- as.data.frame(do.call(rbind, my_flatten(z)[seq(start+i,end,by = 20)]))
@@ -431,164 +454,599 @@ plot_eigens <- function(x,y,z,start,end,covariance_structure,density = F) {
 	 	quiet(df <- melt(cbind(df_x,df_y,df_z)))
 	 	df_small <- df[(df[,1] == "Smallest_ML" | df[,1] == "Smallest_D_ML" | df[,1] == "Smallest_TP" ),]
 	 	df_large <- df[(df[,1] == "Largest_ML" | df[,1] == "Largest_D_ML" | df[,1] == "Largest_TP" ),]
-		if (density == T) {
-		
-			g <- ggplot(data = df_small) + 
-				geom_density(mapping = aes(x = value,color = variable,fill = variable),alpha = 0.5) +
-				geom_vline(xintercept = 1,color = 'red') +
-				labs(title = title,y = "density", x = "") #+
-				theme_light() +
-				theme(axis.text.x = element_text(angle = 60, hjust = 1, vjust = 0.5,size = 6)) +
-				theme(plot.title = element_text(size = 5)) + theme(legend.position="none") +
-				scale_x_continuous(breaks = NULL)
+	 	v <- as.numeric(ref[[rep(seq(1:5),4)[i]]])
+			if (density) {
 			
-			} else if (covariance_structure == "Identity") {
-	 		g <- ggplot(data = df_small) + 
-	 			geom_dotplot(mapping = aes(x = value,color = variable,fill = variable),stackgroups = T,method = "histodot") +
-				geom_vline(xintercept = 1,color = 'red') +
-	 			labs(title = title,y = "count", x = "") +
-	 			theme_light() +
-	 			theme(axis.text.x = element_text(angle = 60, hjust = 1, vjust = 0.5,size = 6)) +
-	 			theme(plot.title = element_text(size = 5)) + theme(legend.position="none")  #+	
-	 	} else if (covariance_structure == "Exponential") {
-		 	g <- ggplot(data = df_small) + 
-		 		geom_dotplot(mapping = aes(x = value,color = variable,fill = variable),stackgroups = T,method = "histodot") +
-		 		labs(title = title,y = "count", x = "") +
-		 		theme_light() +
-		 		theme(plot.title = element_text(size = 5)) +
-		 		theme(axis.text.x = element_text(angle = 60, hjust = 1, vjust = 0.5,size = 6)) + 
-				theme(legend.position="none")
-	 	} else {
-	 		g <- ggplot(data = df_small) + 
-	 			geom_dotplot(mapping = aes(x = value,color = variable,fill = variable),stackgroups = T,method = "histodot") +
-	 			labs(title = title,y = "count", x = "") +
-	 			theme_light() +
-	 			theme(plot.title = element_text(size = 5)) + theme(legend.position="none") #+
-	 	}
-	 	
-	 	if (covariance_structure == "Identity") {
-	 		gl <- ggplot(data = df_large) + 
-	 			geom_dotplot(mapping = aes(x = value,color = variable,fill = variable),stackgroups = T,method = "histodot") +
-	 			geom_vline(xintercept = 1,color = 'red') +
-	 			labs(title = title,y = "count", x = "") +
-	 			theme(axis.text.x = element_text(angle = 60, hjust = 1, vjust = 0.5,size = 6)) +
-				theme_light() +
-	 			theme(plot.title = element_text(size = 5)) + theme(legend.position="none") #+	
-	 	} else if (covariance_structure == "Exponential") {
-	 		gl <- ggplot(data = df_large) + 
-	 			geom_dotplot(mapping = aes(x = value,color = variable,fill = variable),stackgroups = T,method = "histodot") +
-	 			labs(title = title,y = "count", x = "") +
-	 			theme_light() +
-	 			theme(plot.title = element_text(size = 5)) +
-	 			theme(axis.text.x = element_text(angle = 60, hjust = 1, vjust = 0.5,size = 6)) + 
-				theme(legend.position="none") 
-	 	} else {
-	 		gl <- ggplot(data = df_large) + 
-	 			geom_dotplot(mapping = aes(x = value,color = variable,fill = variable),stackgroups = T,method = "histodot") +
-	 			labs(title = title,y = "count", x = "") +
-	 			theme_light() +
-	 			theme(plot.title = element_text(size = 5)) + theme(legend.position="none") #+
-	 	}
-	 	
-	 	#colnames(df) <- c(paste('Smallest_',title),paste("Largest_",title))
-#
-	 	#df_small[,i] <- df[,1]
-	 	#df_large[,i] <- df[,2]
-	 	#colnames(df_small)[i] <- title
-	 	#colnames(df_large)[i] <- title
-	 	
+				g <- ggplot(data = df_small) + 
+					ridges_+
+					rug_ +
+					geom_vline(xintercept = v[1],color = 'red',show.legend = F) +
+					labs(title = title,y = "density", x = "smallest eigenvalues") +
+					theme_ridge + guides(color = FALSE) + scale_y_discrete(expand = expand_scale(add = c(0.2, 2.5))) + # scal y fixes tops of ridges being cutoff
+					scale_fill_discrete(name = paste(covariance_structure," Structure |  Estimator: "),labels = c("Maximum Likelihood", "Diagonalised Maximum Likelihood", "Ledoit-Wolf Shrinkage"))
+				
+				gl <- ggplot(data = df_large) + 
+					ridges_+
+					rug_ +
+					geom_vline(xintercept = v[2],color = 'red',show.legend = F) +
+					labs(title = title,y = "density", x = "largest eigenvalues") +
+					theme_ridge + guides(color = FALSE) + scale_y_discrete(expand = expand_scale(add = c(0.2, 2.5))) +
+					scale_fill_discrete(name = paste(covariance_structure," Structure |  Estimator:"),labels = c("Maximum Likelihood", "Diagonalised Maximum Likelihood", "Ledoit-Wolf Shrinkage"))
+			} else if (!density) {
+			if (covariance_structure == "Identity") {
+		 		g <- ggplot(data = df_small) + 
+		 			geom_dotplot(mapping = aes(x = value,color = variable,fill = variable),stackgroups = T,method = "histodot") +
+		 			geom_vline(xintercept = v[1],color = 'red') +
+		 			labs(title = title,y = "count", x = "smallest eigenvalues") +
+		 			theme_light() +
+		 			theme(axis.text.x = element_text(angle = 0, hjust = 1,  vjust = -0.5,size = 7),axis.text.y = element_text(size = 7),axis.title = element_text(size = 7)) +
+		 			guides(color = FALSE) +
+		 			theme(plot.title = element_text(size = 7)) + scale_fill_discrete(name = "Identity Structure | Estimator",labels = c("Maximum Likelihood", "Diagonalised Maximum Likelihood", "Ledoit-Wolf Shrinkage"))
+		 	} else if (covariance_structure == "Exponential") {
+			 	g <- ggplot(data = df_small) + 
+			 		geom_dotplot(mapping = aes(x = value,color = variable,fill = variable),stackgroups = T,method = "histodot") +
+			 		geom_vline(xintercept = v[1],color = 'red') +
+			 		labs(title = title,y = "count", x = "smallest eigenvalues") +
+			 		theme_light() +
+			 		theme(plot.title = element_text(size = 7)) +
+			 		guides(color = FALSE) +
+			 		theme(axis.text.x = element_text(angle = 0, hjust = 1,  vjust = -0.5,size = 7),axis.text.y = element_text(size = 7),axis.title = element_text(size = 7)) + 
+					scale_fill_discrete(name = "Exponential Structure | Estimator",labels = c("Maximum Likelihood", "Diagonalised Maximum Likelihood", "Ledoit-Wolf Shrinkage"))
+		 	} else {
+		 		g <- ggplot(data = df_small) + 
+		 			geom_dotplot(mapping = aes(x = value,color = variable,fill = variable),stackgroups = T,method = "histodot") +
+		 			geom_vline(xintercept = v[1],color = 'red') +
+		 			labs(title = title,y = "count", x = "smallest eigenvalues") +
+		 			theme_light() +
+		 			theme(axis.text.x = element_text(angle = 0, hjust = 1,  vjust = -0.5,size = 7),axis.text.y = element_text(size = 7),axis.title = element_text(size = 7)) +
+		 			guides(color = FALSE) +
+		 			theme(plot.title = element_text(size = 7)) + scale_fill_discrete(name = paste(covariance_structure," Structure |  Estimator:"),labels = c("Maximum Likelihood", "Diagonalised Maximum Likelihood", "Ledoit-Wolf Shrinkage"))
+		 	}
+		 	
+		 	if (covariance_structure == "Identity") {
+		 		gl <- ggplot(data = df_large) + 
+		 			geom_dotplot(mapping = aes(x = value,color = variable,fill = variable),stackgroups = T,method = "histodot") +
+		 			geom_vline(xintercept = v[2],color = 'red') +
+		 			labs(title = title,y = "count", x = "largest eigenvalues") +
+					theme_light() +
+		 			guides(color = FALSE) +
+		 			theme(axis.text.x = element_text(angle = 0, hjust = 1,  vjust = -0.5,size = 7),axis.text.y = element_text(size = 7),axis.title = element_text(size = 7)) +
+		 			theme(plot.title = element_text(size = 7)) + 
+					scale_fill_discrete(name = "Identity Structure | Estimator",labels = c("Maximum Likelihood", "Diagonalised Maximum Likelihood", "Ledoit-Wolf Shrinkage"))	# a mad daft hack: put the title in the legend
+		 	} else if (covariance_structure == "Exponential") {
+		 		gl <- ggplot(data = df_large) + 
+		 			geom_dotplot(mapping = aes(x = value,color = variable,fill = variable),stackgroups = T,method = "histodot") +
+		 			geom_vline(xintercept = v[2],color = 'red') +
+		 			labs(title = title,y = "count", x = "largest eigenvalues") +
+		 			theme_light() +
+		 			guides(color = FALSE) +
+		 			theme(plot.title = element_text(size = 7)) +
+		 			theme(axis.text.x = element_text(angle = 0, hjust = 1,  vjust = -0.5,size = 7),axis.text.y = element_text(size = 7),axis.title = element_text(size = 7)) +
+					scale_fill_discrete(name = "Exponential Structure | Estimator: ",labels = c("Maximum Likelihood", "Diagonalised Maximum Likelihood", "Ledoit-Wolf Shrinkage"))
+					
+		 	} else {
+		 		gl <- ggplot(data = df_large) + 
+		 			geom_dotplot(mapping = aes(x = value,color = variable,fill = variable),stackgroups = T,method = "histodot") +
+		 			geom_vline(xintercept = v[2],color = 'red') +
+		 			labs(title = title,y = "count", x = "largest eigenvalues") +
+		 			theme_light() +
+		 			guides(color = FALSE) +
+		 			theme(axis.text.x = element_text(angle = 0, hjust = 1,  vjust = -0.5,size = 7),axis.text.y = element_text(size = 7),axis.title = element_text(size = 7)) +
+		 			theme(plot.title = element_text(size = 7)) + scale_fill_discrete(name = paste(covariance_structure," Structure |  Estimator: "),labels = c("Maximum Likelihood", "Diagonalised Maximum Likelihood", "Ledoit-Wolf Shrinkage")) 
+			 	}
+			} 
 	 	eigen_smallest[[i]] <- g
 	 	eigen_biggest[[i]] <- gl
 	 }
 	 density_ <- NULL;dotplot_ <- NULL
-	 if (density) { density_ <- "Density"} else { dotplot_ <- "Dotplots" }
+	 if (density) { 
+	 	density_ <- "KDEs"
+	 	dotplot_ <- ""
+	 } else { 
+	 	dotplot_ <- "Dotplots" 
+	 	density_ <- ""
+	 }
 	 
-	 quiet(grob <- grid.arrange(
-	 	grobs = eigen_smallest,
-	 	ncol = 5, 
-	 	top = paste(covariance_structure," Population Covariance Structure"),
-	 	bottom = paste("Estimators ", "Smallest Eigenvalues")
-	 ))
-	 quiet(grob_large <- grid.arrange(
-	 	grobs = eigen_biggest,
-	 	ncol = 5, 
-	 	top = paste(covariance_structure," Population Covariance Structure"),
-	 	bottom = paste("Estimators ", "Largest Eigenvalues - ",dotplot_,density_)
-	 ))
+	 nplots = 20
+	 ncol = 5
+	 nrow = 4
+	 eval(parse(text = paste0("quiet(grob <- grid_arrange_shared_legend(", paste0("eigen_smallest", "[[", c(1:nplots), "]]", sep = '', collapse = ','), ",ncol =", ncol, ",nrow =", nrow, ", position = 'bottom',  
+	 												 top=grid::textGrob(paste(dotplot_,density_,'of Smallest Eigenvalues from ',covariance_structure,' Covariance Estimates'), gp=grid::gpar(fontsize=12)),bottom=grid::textGrob('Red lines indicate true population covariance smallest eigenvalues',gp = gpar(fontface = 3, fontsize = 9),hjust = 1,x = 1),plot = F))", sep = '')))
+	 eval(parse(text = paste0("quiet(grob_large <- grid_arrange_shared_legend(", paste0("eigen_biggest", "[[", c(1:nplots), "]]", sep = '', collapse = ','), ",ncol =", ncol, ",nrow =", nrow, ", position = 'bottom',  
+	 												 top=grid::textGrob(paste(dotplot_,density_,'of Largest Eigenvalues from ',covariance_structure,' Covariance Estimates'), gp=grid::gpar(fontsize=12)),bottom=grid::textGrob('Red lines indicate true population covariance largest eigenvalues',gp = gpar(fontface = 3, fontsize = 9),hjust = 1,x = 1),plot = F))", sep = '')))
+	 
+
 	 return(list('small' = df_small,'large' = df_large,'g' = grob,'gl' = grob_large))
 }
 	# we expect largest and smallest values to be 1
+direct <- NULL
 for (i in 1:2) {
 	if (i == 1) { 
 		bool = F
-		density = ""
-		dotplot = "dotplots"
+		density <- ""
+		dotplot <- "dotplots"
+		direct <- "density_plots/"
 	}	else {
 		 bool = T
-		 density = "density"
-		 dotplot = ""
+		 density <- "density"
+		 dotplot <- ""
+		 direct <- "density_plots/"
 	}
 	 eig_ident.ls <- plot_eigens(eigen_range_ml,eigen_range_diag_ml,eigen_range_LedoitWolf,0,400,"Identity",density = bool)
-	 ggsave(filename=paste("plots/question1/eig_ident_small_",density,dotplot,".pdf"), 
+	 ggsave(filename=paste("plots/question1/",direct,"eig_ident_small_",density,dotplot,".pdf"), 
 	 			 plot = eig_ident.ls[[3]], 
 	 			 device = cairo_pdf, 
-	 			 width = 210, 
-	 			 height = 297, 
+	 			 width = 250, 
+	 			 height = 250, 
 	 			 units = "mm")
-	 ggsave(filename=paste("plots/question1/eig_ident_large_",density,dotplot,".pdf"), 
+	 ggsave(filename=paste("plots/question1/",direct,"eig_ident_large_",density,dotplot,".pdf"), 
 	 			 plot = eig_ident.ls[[4]], 
 	 			 device = cairo_pdf, 
-	 			 width = 210, 
-	 			 height = 297, 
+	 			 width = 250, 
+	 			 height = 250, 
 	 			 units = "mm")
 	 # As expected, largest exponential eigenvalue = p, smallest tends towards 0 as p increases
 	 eigen_range_cov_structures$exponential$exp_decay
 	 eig_linear.ls <- plot_eigens(eigen_range_ml,eigen_range_diag_ml,eigen_range_LedoitWolf,400,800,"Linear",density = bool)
-	 ggsave(filename=paste("plots/question1/eig_linear_small_",density,dotplot,".pdf"), 
-	 			 plot = eig_linear.ls[[3]], 
-	 			 device = cairo_pdf, 
-	 			 width = 250, 
-	 			 height = 250, 
+	 ggsave(filename=paste("plots/question1/",direct,"eig_linear_small_",density,dotplot,".pdf"),
+	 			 plot = eig_linear.ls[[3]],
+	 			 device = cairo_pdf,
+	 			 width = 250,
+	 			 height = 250,
 	 			 units = "mm")
-	 ggsave(filename=paste("plots/question1/eig_linear_large_",density,dotplot,".pdf"), 
-	 			 plot = eig_ml_linear.ls[[4]], 
-	 			 device = cairo_pdf, 
-	 			 width = 250, 
-	 			 height = 250, 
+	 ggsave(filename=paste("plots/question1/",direct,"eig_linear_large_",density,dotplot,".pdf"),
+	 			 plot = eig_linear.ls[[4]],
+	 			 device = cairo_pdf,
+	 			 width = 250,
+	 			 height = 250,
 	 			 units = "mm")
 	 # As expected, largest exponential eigenvalue = p, smallest tends towards 0 as p increases
 	 eigen_range_cov_structures$exponential$exp_decay
 	 eig_expon.ls <- plot_eigens(eigen_range_ml,eigen_range_diag_ml,eigen_range_LedoitWolf,800,1200,"Exponential",density = bool)
-	 ggsave(filename=paste("plots/question1/eig_expon_small_",density,dotplot,".pdf"), 
-	 			 plot = eig_expon.ls[[3]], 
-	 			 device = cairo_pdf, 
-	 			 width = 250, 
-	 			 height = 250, 
+	 ggsave(filename=paste("plots/question1/",direct,"eig_expon_small_",density,dotplot,".pdf"),
+	 			 plot = eig_expon.ls[[3]],
+	 			 device = cairo_pdf,
+	 			 width = 250,
+	 			 height = 250,
 	 			 units = "mm")
-	 ggsave(filename=paste("plots/question1/eig_expon_large_",density,dotplot,".pdf"), 
-	 			 plot = eig_expon.ls[[4]], 
-	 			 device = cairo_pdf, 
-	 			 width = 250, 
-	 			 height = 250, 
+	 ggsave(filename=paste("plots/question1/",direct,"eig_expon_large_",density,dotplot,".pdf"),
+	 			 plot = eig_expon.ls[[4]],
+	 			 device = cairo_pdf,
+	 			 width = 250,
+	 			 height = 250,
 	 			 units = "mm")
 	 # we see generally, smallest eigenvalue is ~ 0.33, largest is ~2.9
 	 eigen_range_cov_structures$toeplitz$toeplitz
 	 eig_toeplitz.ls <- plot_eigens(eigen_range_ml,eigen_range_diag_ml,eigen_range_LedoitWolf,1200,1600,"Toeplitz",density = bool)
-	 ggsave(filename=paste("plots/question1/eig_toeplitz_small_",density,dotplot,".pdf"), 
-	 			 plot = eig_toeplitz.ls[[3]], 
-	 			 device = cairo_pdf, 
-	 			 width = 250, 
-	 			 height = 250, 
+	 ggsave(filename=paste("plots/question1/",direct,"eig_toeplitz_small_",density,dotplot,".pdf"),
+	 			 plot = eig_toeplitz.ls[[3]],
+	 			 device = cairo_pdf,
+	 			 width = 250,
+	 			 height = 250,
 	 			 units = "mm")
-	 ggsave(filename=paste("plots/question1/eig_toeplitz_large_",density,dotplot,".pdf"), 
-	 			 plot = eig_toeplitz.ls[[4]], 
-	 			 device = cairo_pdf, 
-	 			 width = 250, 
-	 			 height = 250, 
+	 ggsave(filename=paste("plots/question1/",direct,"eig_toeplitz_large_",density,dotplot,".pdf"),
+	 			 plot = eig_toeplitz.ls[[4]],
+	 			 device = cairo_pdf,
+	 			 width = 250,
+	 			 height = 250,
 	 			 units = "mm")
 }
+
+#---- Q2 Plots ----
+
+# As some of the kernel density estimates overlapped nearly perfectly, decided to use ridgeline plots to clearly show all three estimators
+
+plot_traces <- function(x,y,z,start,end,covariance_structure) {
+	options(digits = 3, scipen = -2)
+
+	df_trace <- data.frame(matrix(NA, ncol=1, nrow=21)[-1]) # from SO
+	
+	s <- switch (covariance_structure,
+					"Identity" = 1,
+					"Linear" = 2,
+					"Exponential" = 3,
+					"Toeplitz" = 4
+	)
+	
+	ref <- my_flatten(trace_cov_structures[[s]])
+	traces <- list()
+	
+	for (i in 1:20) {
+		title <- names(my_flatten(x)[start+i])
+		title <- str_remove(pattern = str_extract(pattern = "[^.]*.[^.]*",string = title),string = title)
+		title <- substr(title,2,nchar(title))
+		df_x <- as.data.frame(do.call(rbind, my_flatten(x)[seq(start+i,end,by = 20)]))
+		df_y <- as.data.frame(do.call(rbind, my_flatten(y)[seq(start+i,end,by = 20)]))
+		df_z <- as.data.frame(do.call(rbind, my_flatten(z)[seq(start+i,end,by = 20)]))
+		
+
+		colnames(df_x) <- 'Trace_ML'
+		colnames(df_y) <- 'Trace_D_ML'
+		colnames(df_z) <- 'Trace_TP'
+		v <- as.numeric(ref[[rep(seq(1:5),4)[i]]])
+		quiet(df_trace <- melt(cbind(df_x,df_y,df_z)))
+			g <- ggplot(data = df_trace) + 
+				ridges_+
+				geom_vline(xintercept = v,colour = "red",show.legend = F) +
+				rug_ +
+				labs(title = title,y = "density", x = "trace") +
+				theme_ridge + + guides(color = FALSE) + scale_y_discrete(expand = expand_scale(add = c(0.2, 2.5))) +
+				scale_fill_discrete(name = "Estimator:",labels = c("Maximum Likelihood", "Diagonalised Maximum Likelihood", "Ledoit-Wolf Shrinkage"))
+		traces[[i]] <- g
+	}
+
+# It's digusting, but it works...
+# https://stackoverflow.com/questions/6496811/how-to-pass-a-list-to-a-function-in-r (comments)
+nplots = 20
+ncol = 5
+nrow = 4
+eval(parse(text = paste0("quiet(grob <- grid_arrange_shared_legend(", paste0("traces", "[[", c(1:nplots), "]]", sep = '', collapse = ','), ",ncol =", ncol, ",nrow =", nrow, ", position = 'bottom',  
+													top=grid::textGrob(paste('KDEs of Population Trace',covariance_structure,' Covariance Estimates'), gp=grid::gpar(fontsize=12)),bottom=grid::textGrob('Red lines indicate true population covariance trace',gp = gpar(fontface = 3, fontsize = 9),hjust = 1,x = 1),plot = F))", sep = '')))
+	
+return(list('trace' = df_trace,'g' = grob))
+}
+
+# Trace of identity matrix = p
+trace_cov_structures$identity$identity
+trace_ident.ls <- plot_traces(trace_ml,trace_diag_ml,trace_LedoitWolf,0,400,"Identity")
+ggsave(filename=paste("plots/question2/trace_ident_density.pdf",density,dotplot,".pdf"), 
+			 plot = trace_ident.ls[[2]], 
+			 device = cairo_pdf, 
+			 width = 250, 
+			 height = 250, 
+			 units = "mm")
+# Trace of linear will simply be sum(1:p)
+trace_cov_structures$linear$linear_decay
+trace_linear.ls <- plot_traces(trace_ml,trace_diag_ml,trace_LedoitWolf,400,800,"Linear")
+ggsave(filename=paste("plots/question2/trace_linear_density.pdf",density,dotplot,".pdf"),
+			 plot = trace_linear.ls[[2]],
+			 device = cairo_pdf,
+			 width = 250,
+			 height = 250,
+			 units = "mm")
+# As expected, largest exponential eigenvalue = p, smallest tends towards 0 as p increases
+trace_cov_structures$exponential$exp_decay
+trace_expon.ls <- plot_traces(trace_ml,trace_diag_ml,trace_LedoitWolf,800,1200,"Exponential")
+ggsave(filename=paste("plots/question2/trace_expon_density.pdf"),
+			 plot = trace_expon.ls[[2]],
+			 device = cairo_pdf,
+			 width = 250,
+			 height = 250,
+			 units = "mm")
+# we see generally, smallest eigenvalue is ~ 0.33, largest is ~2.9
+trace_cov_structures$toeplitz$toeplitz
+trace_toeplitz.ls <- plot_traces(trace_ml,trace_diag_ml,trace_LedoitWolf,1200,1600,"Toeplitz")
+ggsave(filename=paste("plots/question2/trace_toeplitz_density.pdf",density,dotplot,".pdf"),
+			 plot = trace_toeplitz.ls[[2]],
+			 device = cairo_pdf,
+			 width = 250,
+			 height = 250,
+			 units = "mm")
+
+#---- Q3 Plots ----
+
+# boxplots
+options(digits = 5, scipen = -2)
+# As some of the kernel density estimates overlapped nearly perfectly, decided to use ridgeline plots to clearly show all three estimators
+dp_diag_ml <- list('identity' = dot_products_diag_ml_identity,'linear' = dot_products_diag_ml_linear,'exponential' = dot_products_diag_ml_exponential,'toeplitz' = dot_products_diag_ml_toeplitz)
+dp_ml <- list('identity' = dot_products_ml_identity,'linear' = dot_products_ml_linear,'exponential' = dot_products_ml_exponential,'toeplitz' = dot_products_ml_toeplitz)
+dp_LedoitWolf <- list('identity' = dot_products_LedoitWolf_cov_estimates_identity,'linear' = dot_products_LedoitWolf_cov_estimates_linear,'exponential' = dot_products_LedoitWolf_cov_estimates_exponential,'toeplitz' = dot_products_LedoitWolf_cov_estimates_toeplitz)
+
+plot_dps <- function(x,y,z,start,end,covariance_structure) {
+	options(digits = 3, scipen = -2)
+	# x is estimator list of eigens
+	dps <- list()
+	
+	df_dp <- data.frame(matrix(NA, ncol=1, nrow=21)[-1]) # from SO
+	
+	s <- switch (covariance_structure,
+							 "Identity" = 1,
+							 "Linear" = 2,
+							 "Exponential" = 3,
+							 "Toeplitz" = 4
+	)
+	
+	dps <- list()
+	
+	for (i in 1:20) {
+		title <- names(my_flatten(x)[start+i])
+		title <- str_remove(pattern = str_extract(pattern = "[^.]*.[^.]*",string = title),string = title)
+		title <- substr(title,2,nchar(title))
+		df_x <- as.data.frame(do.call(rbind, my_flatten(x)[seq(start+i,end,by = 20)]))
+		df_y <- as.data.frame(do.call(rbind, my_flatten(y)[seq(start+i,end,by = 20)]))
+		df_z <- as.data.frame(do.call(rbind, my_flatten(z)[seq(start+i,end,by = 20)]))
+		
+		
+		colnames(df_x) <- 'dp_ML'
+		colnames(df_y) <- 'dp_D_ML'
+		colnames(df_z) <- 'dp_TP'
+		quiet(df_dp <- melt(cbind(df_x,df_y,df_z)))
+		g <- ggplot(data = df_dp) + 
+			geom_boxplot(mapping = aes(y = value,x = variable,fill = variable),color = alpha("black", 0.1),outlier.shape = NA,alpha = 0.5) +
+			geom_hline(yintercept = 1,color = 'red') +
+			geom_jitter(mapping = aes(y = value,x = variable,fill = variable,color = variable),width = 0.4,size = 0.5, alpha = 0.8) +
+			geom_rug(mapping = aes(x = value, colour = variable),show.legend = F,alpha = 1/2,sides = 'r') +
+			labs(title = title,y = "dot products", x = "estimator") +
+			theme_light() + theme(axis.text.y = element_text(angle = 0, hjust = 1,  vjust = -0.5,size = 7),axis.text.x = element_blank(),axis.title = element_text(size = 7)) +	theme(plot.title = element_text(size = 7)) + guides(color = FALSE) +
+			scale_fill_discrete(name = "Estimator:",labels = c("Maximum Likelihood", "Diagonalised Maximum Likelihood", "Ledoit-Wolf Shrinkage")) + ylim(-1,1)
+		dps[[i]] <- g
+	}
+	
+	# It's digusting, but it works...
+	# https://stackoverflow.com/questions/6496811/how-to-pass-a-list-to-a-function-in-r (comments)
+	nplots = 20
+	ncol = 5
+	nrow = 4
+	eval(parse(text = paste0("quiet(grob <- grid_arrange_shared_legend(", paste0("dps", "[[", c(1:nplots), "]]", sep = '', collapse = ','), ",ncol =", ncol, ",nrow =", nrow, ", position = 'bottom',  
+													top=grid::textGrob(paste('Boxplots of Dot Products between Principal Eigenvector Estimate and True Eigenvector Estimate from ',covariance_structure, ' Covariance Structure'), gp=grid::gpar(fontsize=10)),plot = F))", sep = '')))
+	
+	return(list('dp' = df_dp,'g' = grob))
+}
+
+dp_ident.ls <- plot_dps(dp_diag_ml,dp_diag_ml,dp_LedoitWolf,0,400,"Identity")
+ggsave(filename=paste("plots/question3/boxplots/dp_ident_boxplots.pdf"), 
+			 plot = dp_ident.ls[[2]], 
+			 device = cairo_pdf, 
+			 width = 250, 
+			 height = 250, 
+			 units = "mm")
+
+dp_linear.ls <- plot_dps(dp_ml,dp_diag_ml,dp_LedoitWolf,400,800,"Linear")
+ggsave(filename=paste("plots/question3/boxplots/dp_linear_boxplots.pdf"),
+			 plot = dp_linear.ls[[2]],
+			 device = cairo_pdf,
+			 width = 250,
+			 height = 250,
+			 units = "mm")
+
+dp_expon.ls <- plot_dps(dp_ml,dp_diag_ml,dp_LedoitWolf,800,1200,"Exponential")
+ggsave(filename=paste("plots/question3/boxplots/dp_expon_boxplots.pdf"),
+			 plot = dp_expon.ls[[2]],
+			 device = cairo_pdf,
+			 width = 250,
+			 height = 250,
+			 units = "mm")
+
+dp_toeplitz.ls <- plot_dps(dp_ml,dp_diag_ml,dp_LedoitWolf,1200,1600,"Toeplitz")
+ggsave(filename=paste("plots/question3/boxplots/dp_toeplitz_boxplots.pdf"),
+			 plot = dp_toeplitz.ls[[2]],
+			 device = cairo_pdf,
+			 width = 250,
+			 height = 250,
+			 units = "mm")
+
+# density plots
+# As some of the kernel density estimates overlapped nearly perfectly, decided to use ridgeline plots to clearly show all three estimators
+dp_diag_ml <- list('identity' = dot_products_diag_ml_identity,'linear' = dot_products_diag_ml_linear,'exponential' = dot_products_diag_ml_exponential,'toeplitz' = dot_products_diag_ml_toeplitz)
+dp_ml <- list('identity' = dot_products_ml_identity,'linear' = dot_products_ml_linear,'exponential' = dot_products_ml_exponential,'toeplitz' = dot_products_ml_toeplitz)
+dp_LedoitWolf <- list('identity' = dot_products_LedoitWolf_cov_estimates_identity,'linear' = dot_products_LedoitWolf_cov_estimates_linear,'exponential' = dot_products_LedoitWolf_cov_estimates_exponential,'toeplitz' = dot_products_LedoitWolf_cov_estimates_toeplitz)
+
+plot_dps <- function(x,y,z,start,end,covariance_structure) {
+	options(digits = 3, scipen = -2)
+	# x is estimator list of eigens
+	dps <- list()
+	
+	df_dp <- data.frame(matrix(NA, ncol=1, nrow=21)[-1]) # from SO
+	
+	s <- switch (covariance_structure,
+							 "Identity" = 1,
+							 "Linear" = 2,
+							 "Exponential" = 3,
+							 "Toeplitz" = 4
+	)
+	
+	dps <- list()
+	
+	for (i in 1:20) {
+		title <- names(my_flatten(x)[start+i])
+		title <- str_remove(pattern = str_extract(pattern = "[^.]*.[^.]*",string = title),string = title)
+		title <- substr(title,2,nchar(title))
+		df_x <- as.data.frame(do.call(rbind, my_flatten(x)[seq(start+i,end,by = 20)]))
+		df_y <- as.data.frame(do.call(rbind, my_flatten(y)[seq(start+i,end,by = 20)]))
+		df_z <- as.data.frame(do.call(rbind, my_flatten(z)[seq(start+i,end,by = 20)]))
+		
+		
+		colnames(df_x) <- 'dp_ML'
+		colnames(df_y) <- 'dp_D_ML'
+		colnames(df_z) <- 'dp_TP'
+		quiet(df_dp <- melt(cbind(df_x,df_y,df_z)))
+		g <- ggplot(data = df_dp) + 
+			stat_density_ridges(mapping = aes(x = value,y = variable,fill = variable),color = "black",quantile_lines = T,quantiles = 2) +
+			geom_vline(xintercept = 1,color = 'red') +
+			rug_ +
+			labs(title = title,y = "density", x = "dot products") +
+			theme_ridge + guides(color = FALSE) + scale_y_discrete(expand = expand_scale(add = c(0.2, 2.5))) +
+			scale_fill_discrete(name = "Estimator:",labels = c("Maximum Likelihood", "Diagonalised Maximum Likelihood", "Ledoit-Wolf Shrinkage"))
+		dps[[i]] <- g
+	}
+	
+	# It's digusting, but it works...
+	# https://stackoverflow.com/questions/6496811/how-to-pass-a-list-to-a-function-in-r (comments)
+	nplots = 20
+	ncol = 5
+	nrow = 4
+	eval(parse(text = paste0("quiet(grob <- grid_arrange_shared_legend(", paste0("dps", "[[", c(1:nplots), "]]", sep = '', collapse = ','), ",ncol =", ncol, ",nrow =", nrow, ", position = 'bottom',  
+													top=grid::textGrob(paste('KDEs of Dot Products between Principal Eigenvector Estimate and True Eigenvector Estimate from ',covariance_structure, ' Covariance Structure'), gp=grid::gpar(fontsize=10)),bottom=grid::textGrob('Red lines indicate true population covariance smallest eigenvalues',gp = gpar(fontface = 3, fontsize = 9),hjust = 1,x = 1),plot = F))", sep = '')))
+	
+	return(list('dp' = df_dp,'g' = grob))
+}
+
+dp_ident.ls <- plot_dps(dp_diag_ml,dp_diag_ml,dp_LedoitWolf,0,400,"Identity")
+ggsave(filename=paste("plots/question3/density_plots/dp_ident_density.pdf",density,dotplot,".pdf"), 
+			 plot = dp_ident.ls[[2]], 
+			 device = cairo_pdf, 
+			 width = 250, 
+			 height = 250, 
+			 units = "mm")
+
+dp_linear.ls <- plot_dps(dp_ml,dp_diag_ml,dp_LedoitWolf,400,800,"Linear")
+ggsave(filename=paste("plots/question3/density_plots/dp_linear_density.pdf",density,dotplot,".pdf"),
+			 plot = dp_linear.ls[[2]],
+			 device = cairo_pdf,
+			 width = 250,
+			 height = 250,
+			 units = "mm")
+
+dp_expon.ls <- plot_dps(dp_ml,dp_diag_ml,dp_LedoitWolf,800,1200,"Exponential")
+ggsave(filename=paste("plots/question3/density_plots/dp_expon_density.pdf"),
+			 plot = dp_expon.ls[[2]],
+			 device = cairo_pdf,
+			 width = 250,
+			 height = 250,
+			 units = "mm")
+
+dp_toeplitz.ls <- plot_dps(dp_ml,dp_diag_ml,dp_LedoitWolf,1200,1600,"Toeplitz")
+ggsave(filename=paste("plots/question3/density_plots/dp_toeplitz_density.pdf",density,dotplot,".pdf"),
+			 plot = dp_toeplitz.ls[[2]],
+			 device = cairo_pdf,
+			 width = 250,
+			 height = 250,
+			 units = "mm")
+
+#---- Q4 Plots ----
  
- 
- 
+# As some of the kernel density estimates overlapped nearly perfectly, decided to use ridgeline plots to clearly show all three estimators
+sse_diag_ml <- list('identity' = SSE_diag_ml_identity,'linear' = SSE_diag_ml_linear,'exponential' = SSE_diag_ml_exponential,'toeplitz' = SSE_diag_ml_toeplitz)
+sse_ml <- list('identity' = SSE_ml_identity,'linear' = SSE_ml_linear,'exponential' = SSE_ml_exponential,'toeplitz' = SSE_ml_toeplitz)
+sse_LedoitWolf <- list('identity' = SSE_LedoitWolf_cov_estimates_identity,'linear' = SSE_LedoitWolf_cov_estimates_linear,'exponential' = SSE_LedoitWolf_cov_estimates_exponential,'toeplitz' = SSE_LedoitWolf_cov_estimates_toeplitz)
+
+plot_sses <- function(x,y,z,start,end,covariance_structure) {
+	options(digits = 3, scipen = -2)
+	# x is estimator list of eigens
+	sses <- list()
+	
+	df_sse <- data.frame(matrix(NA, ncol=1, nrow=21)[-1]) # from SO
+	
+	s <- switch (covariance_structure,
+							 "Identity" = 1,
+							 "Linear" = 2,
+							 "Exponential" = 3,
+							 "Toeplitz" = 4
+	)
+	
+	sses <- list()
+	
+	for (i in 1:20) {
+		title <- names(my_flatten(x)[start+i])
+		title <- str_remove(pattern = str_extract(pattern = "[^.]*.[^.]*",string = title),string = title)
+		title <- substr(title,2,nchar(title))
+		#title <- substr(title,17,title) # trim off "identity.identity"
+		df_x <- as.data.frame(do.call(rbind, my_flatten(x)[seq(start+i,end,by = 20)]))
+		df_y <- as.data.frame(do.call(rbind, my_flatten(y)[seq(start+i,end,by = 20)]))
+		df_z <- as.data.frame(do.call(rbind, my_flatten(z)[seq(start+i,end,by = 20)]))
+		
+		
+		colnames(df_x) <- 'sse_ML'
+		colnames(df_y) <- 'sse_D_ML'
+		colnames(df_z) <- 'sse_TP'
+		quiet(df_sse <- melt(cbind(df_x,df_y,df_z)))
+		g <- ggplot(data = df_sse) + 
+			#geom_density(mapping = aes(x = value,color = variable,fill = variable),alpha = 0.5) +
+			#geom_density_ridges2(mapping = aes(x = value,y = variable,color = variable,fill = variable)) +
+			ridges_+
+			rug_ +
+			labs(title = title,y = "density", x = "sse") +
+			theme_ridge + guides(color = FALSE) + scale_y_discrete(expand = expand_scale(add = c(0.2, 2.5))) +
+			scale_fill_discrete(name = "Estimator:",labels = c("Maximum Likelihood", "Diagonalised Maximum Likelihood", "Ledoit-Wolf Shrinkage"))
+		sses[[i]] <- g
+	}
+
+	# It's digusting, but it works...
+	# https://stackoverflow.com/questions/6496811/how-to-pass-a-list-to-a-function-in-r (comments)
+	nplots = 20
+	ncol = 5
+	nrow = 4
+	eval(parse(text = paste0("quiet(grob <- grid_arrange_shared_legend(", paste0("sses", "[[", c(1:nplots), "]]", sep = '', collapse = ','), ",ncol =", ncol, ",nrow =", nrow, ", position = 'bottom',  
+													top=grid::textGrob(paste('KDEs of Covariance Estimate SSE from',covariance_structure,' Covariance Structure'), gp=grid::gpar(fontsize=12)),plot = F))", sep = '')))
+	
+	#quiet(grob <- grid_arrange_shared_legend(sses[[1]],sses[[1]],top = "hello")) # test success
+	
+	#quiet(grob <- grid_arrange_shared_legend_plotlist(plotlist = sses,ncol = 5,top = "hello"))#,bottom = b_)) #grid.arrange(grobs = sses,ncol = 5) ,top = "test"
+	
+	return(list('sse' = df_sse,'g' = grob))
+}
+
+sse_ident.ls <- plot_sses(sse_ml,sse_diag_ml,sse_LedoitWolf,0,400,"Identity")
+ggsave(filename=paste("plots/question4/sse_ident_density.pdf",density,dotplot,".pdf"), 
+			 plot = sse_ident.ls[[2]], 
+			 device = cairo_pdf, 
+			 width = 250, 
+			 height = 250, 
+			 units = "mm")
+
+sse_linear.ls <- plot_sses(sse_ml,sse_diag_ml,sse_LedoitWolf,400,800,"Linear")
+ggsave(filename=paste("plots/question4/sse_linear_density.pdf",density,dotplot,".pdf"),
+			 plot = sse_linear.ls[[2]],
+			 device = cairo_pdf,
+			 width = 250,
+			 height = 250,
+			 units = "mm")
+
+sse_expon.ls <- plot_sses(sse_ml,sse_diag_ml,sse_LedoitWolf,800,1200,"Exponential")
+ggsave(filename=paste("plots/question4/sse_expon_density.pdf"),
+			 plot = sse_expon.ls[[2]],
+			 device = cairo_pdf,
+			 width = 250,
+			 height = 250,
+			 units = "mm")
+
+sse_toeplitz.ls <- plot_sses(sse_ml,sse_diag_ml,sse_LedoitWolf,1200,1600,"Toeplitz")
+ggsave(filename=paste("plots/question4/sse_toeplitz_density.pdf",density,dotplot,".pdf"),
+			 plot = sse_toeplitz.ls[[2]],
+			 device = cairo_pdf,
+			 width = 250,
+			 height = 250,
+			 units = "mm")
+
+#---- Summary Plots ---- 
+
+
+n_sort_list_summary <- function(x) { return(unlist(x)[naturalorder(names(unlist(x)))]) }
+
+unique(names(unlist(dot_products_LedoitWolf_cov_estimates_toeplitz)[naturalorder(names(unlist(dot_products_LedoitWolf_cov_estimates_toeplitz)))]))
+
+# Q3
+x11()
+pdf("Dot Product Summary.pdf")
+par(mfrow = c(3,4))
+plot(n_sort_list_summary(dot_products_ml_identity),bg = 'red',main = "Identity - ML",pch = 21,ylab = "Dot Products - ML")
+plot(n_sort_list_summary(dot_products_ml_linear),bg = 'blue',main = "Linear - ML",pch = 21,ylab = "Dot Products - ML")
+plot(n_sort_list_summary(dot_products_ml_exponential),bg = 'purple',main = "Exponential - ML",pch = 21,ylab = "Dot Products - ML")
+plot(n_sort_list_summary(dot_products_ml_toeplitz),bg = 'green',main = "Toeplitz - ML",pch = 21,ylab = "Dot Products - ML")
+plot(n_sort_list_summary(dot_products_diag_ml_identity),bg = 'red',main = "Identity - Diag ML",pch = 21,ylab = "Dot Products - Diag ML")
+plot(n_sort_list_summary(dot_products_diag_ml_linear),bg = 'blue',main = "Linear - Diag ML",pch = 21,ylab = "Dot Products - Diag ML")
+plot(n_sort_list_summary(dot_products_diag_ml_exponential),bg = 'purple',main = "Exponential - Diag ML",pch = 21,ylab = "Dot Products - Diag ML")
+plot(n_sort_list_summary(dot_products_diag_ml_toeplitz),bg = 'green',main = "Toeplitz - Diag ML",pch = 21,ylab = "Dot Products - Diag ML")
+plot(n_sort_list_summary(dot_products_LedoitWolf_cov_estimates_identity),bg = 'red',main = "Identity - LW",pch = 21,ylab = "Dot Products - LW")
+plot(n_sort_list_summary(dot_products_LedoitWolf_cov_estimates_linear),bg = 'blue',main = "Linear - LW",pch = 21,ylab = "Dot Products  - LW")
+plot(n_sort_list_summary(dot_products_LedoitWolf_cov_estimates_exponential),bg = 'purple',main = "Exponential - LW",pch = 21,ylab = "Dot Products  - LW")
+plot(n_sort_list_summary(dot_products_LedoitWolf_cov_estimates_toeplitz),bg = 'green',main = "Toeplitz - LW",pch = 21,ylab = "Dot Products  - LW")  
+dev.off()
+
+# Q4
+x11()
+pdf("SSE Summary.pdf")
+par(mfrow = c(3,4))
+plot(n_sort_list_summary(SSE_ml_identity),bg = 'red',main = "Identity - ML",pch = 21,ylab = "SSE - ML")
+plot(n_sort_list_summary(SSE_ml_linear),bg = 'blue',main = "Linear - ML",pch = 21,ylab = "SSEs - ML")
+plot(n_sort_list_summary(SSE_ml_exponential),bg = 'purple',main = "Exponential - ML",pch = 21,ylab = "SSEs - ML")
+plot(n_sort_list_summary(SSE_ml_toeplitz),bg = 'green',main = "Toeplitz - ML",pch = 21,ylab = "SSEs - ML")
+plot(n_sort_list_summary(SSE_diag_ml_identity),bg = 'red',main = "Identity - Diag ML",pch = 21,ylab = "SSEs - Diag ML")
+plot(n_sort_list_summary(SSE_diag_ml_linear),bg = 'blue',main = "Linear - Diag ML",pch = 21,ylab = "SSEs - Diag ML")
+plot(n_sort_list_summary(SSE_diag_ml_exponential),bg = 'purple',main = "Exponential - Diag ML",pch = 21,ylab = "SSEs - Diag ML")
+plot(n_sort_list_summary(SSE_diag_ml_toeplitz),bg = 'green',main = "Toeplitz - Diag ML",pch = 21,ylab = "SSEs - Diag ML")
+plot(n_sort_list_summary(SSE_LedoitWolf_cov_estimates_identity),bg = 'red',main = "Identity - LW",pch = 21,ylab = "SSEs - LW")
+plot(n_sort_list_summary(SSE_LedoitWolf_cov_estimates_linear),bg = 'blue',main = "Linear - LW",pch = 21,ylab = "SSEs  - LW")
+plot(n_sort_list_summary(SSE_LedoitWolf_cov_estimates_exponential),bg = 'purple',main = "Exponential - LW",pch = 21,ylab = "SSEs  - LW")
+plot(n_sort_list_summary(SSE_LedoitWolf_cov_estimates_toeplitz),bg = 'green',main = "Toeplitz - LW",pch = 21,ylab = "SSEs  - LW")  
+dev.off()
+
+#---- Numerical Summaries ----
+
+cbind(c("Identity","Linear","Exponential","Toeplitz"),
+			rbind(summary(unlist(dot_products_ml_identity)),
+						summary(unlist(dot_products_ml_linear)),
+						summary(unlist(dot_products_ml_exponential)),
+						summary(unlist(dot_products_ml_toeplitz))))
 
  
